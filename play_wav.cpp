@@ -34,6 +34,7 @@
 #define STATE_PAUSED  1
 #define STATE_PLAY    2
 
+//#define HANDLE_SPI
 
 static short _AudioPlayWavInstances = 0;
 static short _AudioPlayWavInstance = -1;
@@ -244,20 +245,23 @@ end:  // end of file reached or other reason to stop
 
 inline void AudioPlayWav::startUsingSPI(void)
 {
-
+#if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
     if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
 #else
     AudioStartUsingSPI();
 #endif
+#endif
 }
 
 inline void AudioPlayWav::stopUsingSPI(void)
 {
+#if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
     if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
 #else
     AudioStopUsingSPI();
+#endif
 #endif
 }
 
