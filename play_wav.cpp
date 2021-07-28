@@ -26,9 +26,9 @@
 
 // (c) Frank Bösing, 07/2021
 
-#include <Arduino.h>
 #include "play_wav.h"
-#include "spi_interrupt.h"
+#include <spi_interrupt.h>
+
 
 #define STATE_STOP    0
 #define STATE_PAUSED  1
@@ -36,8 +36,8 @@
 
 //#define HANDLE_SPI
 
-static short _AudioPlayWavInstances = 0;
-static short _AudioPlayWavInstance = -1;
+static uint8_t _AudioPlayWavInstances = 0;
+static int8_t _AudioPlayWavInstance = -1;
 
 
 FLASHMEM
@@ -73,11 +73,11 @@ bool AudioPlayWav::play(File file, const bool paused)
         ret = false;
     } else {
         state = paused ? STATE_PAUSED : STATE_PLAY;
+        last_err = APW_ERR_OK;
         ret = true;
     }
 
     if (irq) NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
-    last_err = APW_ERR_OK;
     return ret;
 
 }
@@ -108,15 +108,16 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
         ret = false;
     } else {
         state = paused ? STATE_PAUSED : STATE_PLAY;
+        last_err = APW_ERR_OK;
         ret = true;
     }
     if (irq) NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
-    last_err = APW_ERR_OK;
     return ret;
 }
 
 void AudioPlayWav::stop(void)
 {
+
     bool irq = false;
     if (NVIC_IS_ENABLED(IRQ_SOFTWARE)) {
         NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
@@ -130,8 +131,9 @@ void AudioPlayWav::stop(void)
     if (buffer) {
         free(buffer);
         buffer = nullptr;
+        sz_mem = 0;
     }
-    data_length = 0;
+
     state = STATE_STOP;
 
     if (irq) NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
@@ -150,10 +152,10 @@ void  AudioPlayWav::update(void)
 	if (buffer_rd == sz_mem - sz_frame && _AudioPlayWavInstance == my_instance)
 	{
         size_t rd = wavfile.read( buffer, sz_mem);
-        
+
         //at EOF, fill remaining space:
-        if (rd < sz_mem) {                
-            int len = sz_frame - rd;            
+        if (rd < sz_mem) {
+            int len = sz_frame - rd;
             if (len > 0) {
                 //prevent "plopp" for 8 bit (8 bit fmt is unsigned)
                 memset( &buffer[rd], (bytes == 1) ? 128:0 , len);
@@ -191,16 +193,16 @@ void  AudioPlayWav::update(void)
         do {
             unsigned chan = 0;
             do {
-                queue[chan]->data[i] = *p++;                
+                queue[chan]->data[i] = *p++;
             } while (++chan < channels);
-                        
+
             chan = 0;
             do {
-                queue[chan]->data[i + 1] = *p++;                
+                queue[chan]->data[i + 1] = *p++;
             } while (++chan < channels);
-            
-            i+=2;            
-            
+
+            i+=2;
+
         } while (i < AUDIO_BLOCK_SAMPLES);
 
 
@@ -350,9 +352,9 @@ bool AudioPlayWav::readHeader()
         buffer = nullptr;
     }
 
-    buffer_rd = total_length = data_length = 0;
+    sz_mem = buffer_rd = total_length = data_length = 0;
     channelmask = sample_rate = channels = bytes = blocks_played = 0;
-    
+
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
 
@@ -360,7 +362,7 @@ bool AudioPlayWav::readHeader()
 
     rd = wavfile.read(&fileHeader, sizeof(fileHeader));
     if (rd < sizeof(fileHeader)) return false;
-    
+
     last_err = APW_ERR_FORMAT;
 	if ( fileHeader.id != cRIFF || fileHeader.riffType != cWAVE ) return false;
 
@@ -393,7 +395,7 @@ bool AudioPlayWav::readHeader()
                 //Serial.printf("channel mask: 0x%x\n", channelmask);
             }
 
-            //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);            
+            //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
             sample_rate = fmtHeader.dwSamplesPerSec;
             channels = fmtHeader.wChannels;
             sz_frame = AUDIO_BLOCK_SAMPLES * channels * bytes;
@@ -425,6 +427,7 @@ bool AudioPlayWav::readHeader()
 
     buffer = (_wpsample_t*) malloc(sz_mem);
     if (buffer == nullptr) {
+        sz_mem = 0;
 		last_err = APW_ERR_OUT_OF_MEMORY;
 		return false;
 	}
