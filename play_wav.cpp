@@ -135,7 +135,7 @@ void  AudioPlayWav::update(void)
 
         //when EOF, fill remaining space:
         if ( rd < sz_frame ) {
-            memset( &p[wr], (bytes == 1) ? 128:0 , sz_frame);
+            memset( &p[wr+rd], (bytes == 1) ? 128:0 , sz_frame - rd);
             //Serial.println("EOF!");
             data_length = 1;
         }
@@ -409,8 +409,8 @@ bool AudioPlayWav::readHeader(int newState)
         inst_ofs += sz_frame;
         if (++i_ofs >= _AudioPlayWavInstances) i_ofs = 0;
     }
-    inst_ofs *= sizeof(_wpsample_t);
-    rd = wavfile.read(buffer, inst_ofs); //inst_ofs will be small
+    inst_ofs *= bytes;
+    rd = wavfile.read(&buffer[0], inst_ofs); //inst_ofs will be small
 
    // Serial.printf("%d %x\n",i_ofs, (uint32_t)inst_ofs );
 
