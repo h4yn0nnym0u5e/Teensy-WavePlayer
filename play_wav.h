@@ -72,21 +72,23 @@ public:
 	uint32_t channelMask(void);
 	uint8_t lastErr(void);              // returns last error
 	size_t memUsed(void);
-	uint8_t instance(void);
+	uint8_t instanceID(void);
 	virtual void update(void);
 private:
   void begin(void);
 	File wavfile;
-	bool readHeader();
+	bool readHeader(int newState);
 	inline void startUsingSPI(void);
 	inline void stopUsingSPI(void);
+    bool stopInt();
+    void startInt(bool enabled);
 	audio_block_t *queue[_AudioPlayWav_MaxChannels];
 	_wpsample_t *buffer = nullptr;	    // buffer data
 	size_t sz_mem = 0;					// Size of allocated memory
-	size_t sz_mem_additional = 0;		// Size of additional allocated memory
 	size_t sz_frame;				    // Size of a sample frame in bytes
 	size_t data_length;		  	        // number of frames remaining in file
-	size_t buffer_rd;				    // where we're at consuming "buffer"	 Lesezeiger
+	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
+    size_t inst_ofs;
 	size_t total_length = 0;			// number of audio data bytes in file
     unsigned int blocks_played = 0;		// # of blocks played
 	unsigned int sample_rate = 0;
@@ -94,7 +96,9 @@ private:
 	uint32_t channelmask = 0;           // dwChannelMask
 	uint8_t my_instance;     	        // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
-	uint8_t state = 0;					// play status (stop, pause, playing)
+	uint8_t state;					    // play status (stop, pause, playing)
+    uint8_t sz_mem_additional = 0;		// additional allocated memory (multiplicator)
 	uint8_t last_err = APW_ERR_OK;
+
 };
 
