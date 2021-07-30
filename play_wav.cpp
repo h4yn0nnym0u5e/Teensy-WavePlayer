@@ -35,17 +35,22 @@
 #define STATE_PLAY    2
 
 //#define HANDLE_SPI
-
+#if defined(KINETISL)
+static const uint8_t _AudioPlayWavInstances = 1;
+static const int8_t _AudioPlayWavInstance = 0;
+#else
 static uint8_t _AudioPlayWavInstances = 0;
 static int8_t _AudioPlayWavInstance = -1;
-
+#endif
 
 FLASHMEM
 void AudioPlayWav::begin(void)
 {
     state = STATE_STOP;
+#if !defined(KINETISL)
     my_instance = _AudioPlayWavInstances;
     ++_AudioPlayWavInstances;
+#endif
 }
 
 bool AudioPlayWav::play(File file)
@@ -95,13 +100,10 @@ void AudioPlayWav::stop(void)
 {
 
     state = STATE_STOP;
-    asm("dmb":::"memory");
 
-    if (wavfile) {
-        bool irq = stopInt();
-        wavfile.close();
-        startInt(irq);
-    }
+    bool irq = stopInt();
+    if (wavfile) wavfile.close();
+    startInt(irq);
 
     stopUsingSPI();
 
@@ -112,118 +114,6 @@ void AudioPlayWav::stop(void)
     }
 }
 
-__attribute__((hot))
-void  AudioPlayWav::update(void)
-{
-
-	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
-        _AudioPlayWavInstance = 0;
-
-    if ( state != STATE_PLAY ) return;
-
-    if (_AudioPlayWavInstance == my_instance)
-    {
-
-        //Serial.printf("I:%d %x %x\n",_AudioPlayWavInstance, buffer_rd, sz_mem);
-        uint8_t *p = (uint8_t*)buffer;
-        size_t wr = inst_ofs;
-
-        size_t rd = wavfile.read( &p[wr], sz_mem - wr);
-
-        if (wr > 0)
-            rd += wavfile.read( &p[0], wr);
-
-        //when EOF, fill remaining space:
-        if ( rd < sz_frame ) {
-            memset( &p[wr+rd], (bytes == 1) ? 128:0 , sz_frame - rd);
-            //Serial.println("EOF!");
-            data_length = 1;
-        }
-
-    }
-
-	++blocks_played;
-    //if (blocks_played == 1501) goto end; //faster debug
-
-
-	// allocate the audio blocks to transmit
-	for (unsigned chan = 0; chan < channels; chan++) {
-		queue[chan] = AudioStream::allocate();
-		if (queue[chan] == nullptr) {
-			for (unsigned i = 0; i < chan; i++) AudioStream::release(queue[i]);
-			last_err = APW_ERR_NO_AUDIOBLOCKS;
-			//Serial.println("Waveplayer stopped: not enough AudioMemory().");
-			goto end;
-		}
-	}
-
-
-	// copy the samples to the audio blocks:
-	if (bytes == 2) {
-
-		// 16 bits:
-
-        _wpsample_t *p = &buffer[buffer_rd];
-        buffer_rd += sz_frame;
-        if (buffer_rd >= sz_mem / 2)
-            buffer_rd = 0;
-
-        unsigned i = 0;
-        do {
-            unsigned chan = 0;
-            do {
-                queue[chan]->data[i] = *p++;
-            } while (++chan < channels);
-
-            chan = 0;
-            do {
-                queue[chan]->data[i + 1] = *p++;
-            } while (++chan < channels);
-
-            i+=2;
-
-        } while (i < AUDIO_BLOCK_SAMPLES);
-
-
-	} else {
-
-		// 8 bits
-		int8_t *p = (int8_t*) &buffer[buffer_rd];
-		buffer_rd += sz_frame / 2;
-		if (buffer_rd >= sz_mem / 2)
-            buffer_rd = 0;
-
-		unsigned i = 0;
-		do {
-
-			unsigned chan = 0;
-			do {
-				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-			} while (++chan < channels);
-
-			chan = 0;
-			do {
-				queue[chan]->data[i + 1] = ( *p++ - 128 ) << 8;
-			} while (++chan < channels);
-
-			i += 2;
-		} while (i < AUDIO_BLOCK_SAMPLES);
-
-	}
-
-
-	// transmit them:
-	for (unsigned chan = 0; chan < channels; chan++) {
-		AudioStream::transmit(queue[chan], chan);
-		AudioStream::release(queue[chan]);
-	}
-
-	if (--data_length > 0) return;
-
-end:  // end of file reached or other reason to stop
-    stop();
-    return;
-}
 
 /*
   00000000  52494646 66EA6903 57415645 666D7420  RIFFf.i.WAVEfmt
@@ -311,7 +201,7 @@ bool AudioPlayWav::readHeader(int newState)
     }
 
     sz_mem = buffer_rd = total_length = data_length = 0;
-    channelmask = sample_rate = channels = bytes = blocks_played = 0;
+    channelmask = sample_rate = channels = bytes = 0;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
@@ -378,58 +268,174 @@ bool AudioPlayWav::readHeader(int newState)
     if (fmtok != true) return false;
     last_err = APW_ERR_OK;
 
-    //Calculate the needed buffer memory:
-    // #of instances * #channels * #bytes per sample * Audio block size, 512 Bytes minimum
-    size_t sz = _AudioPlayWavInstances * sz_frame * bytes;
-    sz_mem = sz;
-    sz_mem *= 1 + sz_mem_additional;
-    while (sz_mem < 512) sz_mem += sz;
+    total_length = dataHeader.chunkSize;
+	data_length = dataHeader.chunkSize / (sz_frame * bytes);
 
-    buffer = (_wpsample_t*) malloc(sz_mem);
+    //calculate the needed buffer memory:
+    sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
+
+#if !defined(KINETISL)
+    if (sz_mem_additional > 0)
+        sz_mem *= sz_mem_additional;
+#endif
+
+    //allocate:
+    buffer = (_wpsample_t*) malloc( sz_mem );
     if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = APW_ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
-    total_length = dataHeader.chunkSize;
-	data_length = dataHeader.chunkSize / sz_frame;
+#if 1
+#if !defined(KINETISL)
+    if (_AudioPlayWavInstances > 1) {
+        //For sync start, and to start immedeately:
+        //The next instanceID is random. If it is not our instance, we to fill the buffer with enough data.
 
-    //find how much gets played until the first
-    //interrupt for our id hits us.
-    //then, read that amout and fill our buffer
+        irq = stopInt();
 
-    irq = stopInt();
-    //Att: interrupts must be off here! really!
-    unsigned i_ofs = _AudioPlayWavInstance + 1;
-    i_ofs %= _AudioPlayWavInstances;
-    inst_ofs = 0;
-    //Serial.printf("Next ID: %d, ", i_ofs);
-    while (my_instance != i_ofs) {
-        inst_ofs += sz_frame;
-        if (++i_ofs >= _AudioPlayWavInstances) i_ofs = 0;
-    }
-    inst_ofs *= bytes;
-    rd = wavfile.read(&buffer[0], inst_ofs); //inst_ofs will be small
+        int inst = _AudioPlayWavInstance + 1;
+        if (inst >= _AudioPlayWavInstances) inst = 0;
 
-   // Serial.printf("%d %x\n",i_ofs, (uint32_t)inst_ofs );
-
-    if (rd < inst_ofs) {
-        data_length = rd / sz_frame;
-        memset(&buffer[rd / 2], (bytes == 1) ? 128:0 , inst_ofs - rd);
-    }
-
-    state = newState;
-    //erliest point of int enable again, after state is set. audio int can hit us very soon.
-    startInt(irq);
+        //inst is now the id of the next running instance.
+        if (inst != my_instance) {
+            buffer_rd = sz_mem;
+            uint8_t *p = (uint8_t*)&buffer[0];
+            do {
+                buffer_rd -= sz_frame * bytes;
+                if (++inst >= _AudioPlayWavInstances) inst = 0;
+            } while (inst != my_instance);
+            wavfile.read(&p[buffer_rd], sz_mem - buffer_rd);
+        }
+        
+        state = newState;
+        asm("dmb":::"memory");
+        startInt(irq);
+    } else state = newState;
+#endif
+#else
+    state = newState; //this *must* be the last instruction.
+#endif
 
     return true;
+}
+
+
+
+__attribute__((hot))
+void  AudioPlayWav::update(void)
+{
+
+#if defined(KINETISL)
+    if ( state != STATE_PLAY ) return;
+    if (1)
+#else
+	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
+        _AudioPlayWavInstance = 0;
+
+    if ( state != STATE_PLAY ) return;
+
+    if (_AudioPlayWavInstance == my_instance && buffer_rd == 0 )
+#endif
+    {
+        size_t wr = buffer_rd * bytes;
+        uint8_t *p = (uint8_t*)buffer;
+        size_t rd = wavfile.read( &p[wr], sz_mem);
+
+        //when EOF, fill remaining space:
+        if ( rd <= sz_mem) {
+            memset( &p[wr+rd], (bytes == 1) ? 128:0 , sz_mem - rd);
+        }
+    }
+
+	// allocate the audio blocks to transmit
+	for (unsigned chan = 0; chan < channels; chan++) {
+		queue[chan] = AudioStream::allocate();
+		if (queue[chan] == nullptr) {
+			for (unsigned i = 0; i < chan; i++) AudioStream::release(queue[i]);
+			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			//Serial.println("Waveplayer stopped: not enough AudioMemory().");
+			goto end;
+		}
+	}
+
+	// copy the samples to the audio blocks:
+	if (bytes == 2) {
+
+		// 16 bits:
+
+        _wpsample_t *p = &buffer[buffer_rd];
+        buffer_rd += sz_frame;
+        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem )
+                buffer_rd = 0;
+
+        unsigned i = 0;
+        do {
+            unsigned chan = 0;
+            do {
+                queue[chan]->data[i] = *p++;
+            } while (++chan < channels);
+
+            chan = 0;
+            do {
+                queue[chan]->data[i + 1] = *p++;
+            } while (++chan < channels);
+
+            i+=2;
+
+        } while (i < AUDIO_BLOCK_SAMPLES);
+
+
+	} else {
+
+		// 8 bits
+		int8_t *p = (int8_t*) &buffer[buffer_rd];
+		buffer_rd += sz_frame / sizeof(_wpsample_t);
+        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem )
+                buffer_rd = 0;
+
+
+		unsigned i = 0;
+		do {
+
+			unsigned chan = 0;
+			do {
+				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+			} while (++chan < channels);
+
+			chan = 0;
+			do {
+
+				queue[chan]->data[i + 1] = ( *p++ - 128 ) << 8;
+			} while (++chan < channels);
+
+			i += 2;
+		} while (i < AUDIO_BLOCK_SAMPLES);
+
+	}
+
+
+	// transmit them:
+	for (unsigned chan = 0; chan < channels; chan++) {
+		AudioStream::transmit(queue[chan], chan);
+		AudioStream::release(queue[chan]);
+	}
+
+    //Serial.printf("%d\n",data_length);
+	if (--data_length > 0)
+        return;
+
+end:  // end of file reached or other reason to stop
+    stop();
+    return;
 }
 
 bool AudioPlayWav::stopInt()
 {
     if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) ) {
         NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
+        asm("dmb":::"memory");
         return true;
     }
     return false;
@@ -463,11 +469,13 @@ inline void AudioPlayWav::stopUsingSPI(void)
 #endif
 }
 
+#if !defined(KINETISL)
 bool AudioPlayWav::addMemoryForRead(size_t bytes)
 {
 	sz_mem_additional = bytes;
 	return true;
 }
+#endif
 
 bool AudioPlayWav::isPlaying(void)
 {
@@ -500,7 +508,8 @@ bool AudioPlayWav::isStopped(void)
 
 uint32_t AudioPlayWav::positionMillis(void)
 {
-    return (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * blocks_played;
+    return (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) *
+        (total_length / (bytes * sz_frame)  - data_length);
 }
 
 

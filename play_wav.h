@@ -57,7 +57,9 @@ public:
 	bool play(File file, bool paused);
 	bool play(const char *filename);
 	bool play(const char *filename, bool paused); //start in paused state?
+#if !defined(KINETISL)
 	bool addMemoryForRead(size_t bytes); //add memory
+#endif
 	void togglePlayPause(void);
 	void pause(bool pause);
 	void stop(void);
@@ -88,17 +90,14 @@ private:
 	size_t sz_frame;				    // Size of a sample frame in bytes
 	size_t data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
-    size_t inst_ofs;
 	size_t total_length = 0;			// number of audio data bytes in file
-    unsigned int blocks_played = 0;		// # of blocks played
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
 	uint32_t channelmask = 0;           // dwChannelMask
-	uint8_t my_instance;     	        // instance id
+	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state;					    // play status (stop, pause, playing)
     uint8_t sz_mem_additional = 0;		// additional allocated memory (multiplicator)
 	uint8_t last_err = APW_ERR_OK;
-
 };
 
