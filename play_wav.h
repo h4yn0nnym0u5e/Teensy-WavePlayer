@@ -45,7 +45,7 @@ typedef int16_t _wpsample_t;
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
 #else
-	const int _AudioPlayWav_MaxChannels = 8;
+	const int _AudioPlayWav_MaxChannels = 16;
 #endif
 
 

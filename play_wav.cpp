@@ -291,7 +291,7 @@ bool AudioPlayWav::readHeader(int newState)
 #if !defined(KINETISL)
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immedeately:
-        //The next instanceID is random. If it is not our instance, we to fill the buffer with enough data.
+        //The next instanceID is random. If it is not our instance, we have to fill the buffer with enough data.
 
         irq = stopInt();
 
@@ -509,7 +509,7 @@ bool AudioPlayWav::isStopped(void)
 uint32_t AudioPlayWav::positionMillis(void)
 {
     return (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) *
-        (total_length / (bytes * sz_frame)  - data_length);
+        (total_length / (bytes * sz_frame) - data_length);
 }
 
 
