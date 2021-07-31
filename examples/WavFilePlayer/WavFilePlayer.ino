@@ -61,10 +61,9 @@ void setup() {
     Serial.println(CrashReport);
     CrashReport.clear();
   }
-  //Serial.printf("Instances: %d\n", (int)_AudioPlayWavInstances);
-  //Serial.println(_AudioPlayWavInstances);
 
-  AudioMemory(50);
+
+  AudioMemory(20);
 
 
   SPI.setMOSI(SDCARD_MOSI_PIN);
@@ -76,12 +75,7 @@ void setup() {
       delay(500);
     }
   }
-/*
- playWav.play("Nums_7dot1_16_44100.wav", true);
- playWav.pause(false);
- while (playWav.isPlaying()) {}
-*/ 
-//playWav.addMemoryForRead(2048);
+
  
 }
 
