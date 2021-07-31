@@ -1,4 +1,4 @@
-# Teensy-wavePlayer
+# Teensy-WavePlayer
 
 Extended version
 
