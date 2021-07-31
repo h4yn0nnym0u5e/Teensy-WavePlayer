@@ -8,7 +8,8 @@ Extended version
 - every audio block size
 - interleaved reads: only one file access on each audio-cycle
 - lastErr(void) returns last error
-- addMemoryForRead(size_t bytes) adds memory
+- addMemoryForRead() adds memory
+- syncronized start
 
 
 Example wave files taken from here:
