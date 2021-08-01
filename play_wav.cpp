@@ -41,6 +41,7 @@ static const int8_t _AudioPlayWavInstance = 0;
 #else
 static uint8_t _AudioPlayWavInstances = 0;
 static int8_t _AudioPlayWavInstance = -1;
+static uint8_t _sz_mem_additional = 1;
 #endif
 
 FLASHMEM
@@ -275,8 +276,8 @@ bool AudioPlayWav::readHeader(int newState)
     sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
 
 #if !defined(KINETISL)
-    if (sz_mem_additional > 0)
-        sz_mem *= sz_mem_additional;
+    if (_sz_mem_additional > 1)
+        sz_mem *= _sz_mem_additional;
 #endif
 
     //allocate:
@@ -470,9 +471,10 @@ inline void AudioPlayWav::stopUsingSPI(void)
 }
 
 #if !defined(KINETISL)
-bool AudioPlayWav::addMemoryForRead(size_t bytes)
+bool AudioPlayWav::addMemoryForRead(size_t mult)
 {
-	sz_mem_additional = bytes;
+    if (mult < 1) mult = 1;
+	_sz_mem_additional = mult;
 	return true;
 }
 #endif

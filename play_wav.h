@@ -97,7 +97,6 @@ private:
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state;					    // play status (stop, pause, playing)
-    uint8_t sz_mem_additional = 0;		// additional allocated memory (multiplicator)
 	uint8_t last_err = APW_ERR_OK;
 };
 
