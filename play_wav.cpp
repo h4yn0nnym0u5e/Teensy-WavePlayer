@@ -276,8 +276,7 @@ bool AudioPlayWav::readHeader(int newState)
     sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
 
 #if !defined(KINETISL)
-    if (_sz_mem_additional > 1)
-        sz_mem *= _sz_mem_additional;
+    sz_mem *= _sz_mem_additional;
 #endif
 
     //allocate:
