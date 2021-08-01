@@ -38,6 +38,7 @@
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
 static const int8_t _AudioPlayWavInstance = 0;
+static const uint8_t _sz_mem_additional = 1;
 #else
 static uint8_t _AudioPlayWavInstances = 0;
 static int8_t _AudioPlayWavInstance = -1;
@@ -274,10 +275,8 @@ bool AudioPlayWav::readHeader(int newState)
 
     //calculate the needed buffer memory:
     sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
-
-#if !defined(KINETISL)
     sz_mem *= _sz_mem_additional;
-#endif
+
 
     //allocate:
     buffer = (_wpsample_t*) malloc( sz_mem );
