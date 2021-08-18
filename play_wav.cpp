@@ -366,8 +366,7 @@ void  AudioPlayWav::update(void)
 
         _wpsample_t *p = &buffer[buffer_rd];
         buffer_rd += sz_frame;
-        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem )
-                buffer_rd = 0;
+        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem ) buffer_rd = 0;
 
         unsigned i = 0;
         do {
@@ -391,9 +390,7 @@ void  AudioPlayWav::update(void)
 		// 8 bits
 		int8_t *p = (int8_t*) &buffer[buffer_rd];
 		buffer_rd += sz_frame / sizeof(_wpsample_t);
-        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem )
-                buffer_rd = 0;
-
+        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem ) buffer_rd = 0;
 
 		unsigned i = 0;
 		do {
