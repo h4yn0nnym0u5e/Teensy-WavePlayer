@@ -182,7 +182,7 @@ typedef struct
     unsigned short wSamplesPerBlock;
     unsigned short wReserved;
   } Samples;
-  unsigned long        dwChannelMask;
+  unsigned long dwChannelMask;
   //GUID         SubFormat;
 } __attribute__ ((__packed__)) tFmtHeaderExtensible;
 
@@ -194,10 +194,9 @@ typedef struct {
 
 bool AudioPlayWav::readHeader(int newState)
 {
+        
     size_t position, rd;
     tFileHeader fileHeader;
-    tFmtHeaderEx fmtHeader;
-    tFmtHeaderExtensible fmtHeaderExtensible;
     tDataHeader dataHeader;
     bool irq, fmtok;
 
@@ -212,8 +211,6 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
 
-    memset((void*)&fileHeader, 0, sizeof(fileHeader));
-
     irq = stopInt();
     rd = wavfile.read(&fileHeader, sizeof(fileHeader));
     startInt(irq);
@@ -221,10 +218,6 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_FORMAT;
 	if ( fileHeader.id != cRIFF || fileHeader.riffType != cWAVE ) return false;
-
-    memset((void*)&fmtHeader, 0, sizeof(fmtHeader));
-    memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
-    memset((void*)&dataHeader, 0, sizeof(dataHeader));
 
 	position = sizeof(fileHeader);
     fmtok = false;
@@ -239,8 +232,11 @@ bool AudioPlayWav::readHeader(int newState)
         if (rd < sizeof(dataHeader)) return false;
 
         if (dataHeader.chunkID == cFMT) {
-                //Serial.println(dataHeader.chunkSize);
-
+            tFmtHeaderEx fmtHeader;
+            memset((void*)&fmtHeader, 0, sizeof(fmtHeader));
+            
+            //Serial.println(dataHeader.chunkSize);
+            irq = stopInt();
             if (dataHeader.chunkSize < 16) {
                 wavfile.read(&fmtHeader, sizeof(tFmtHeader));
                 bytes = 1;
@@ -248,12 +244,15 @@ bool AudioPlayWav::readHeader(int newState)
                 wavfile.read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
             } else {
+                tFmtHeaderExtensible fmtHeaderExtensible;
                 wavfile.read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
-                rd = wavfile.read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
+                memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
+                wavfile.read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
                 channelmask = fmtHeaderExtensible.dwChannelMask;
                 //Serial.printf("channel mask: 0x%x\n", channelmask);
             }
+            startInt(irq);
 
             //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
             sample_rate = fmtHeader.dwSamplesPerSec;
@@ -348,7 +347,7 @@ void  AudioPlayWav::update(void)
 
 
 	// allocate the audio blocks to transmit
-    audio_block_t *queue[_AudioPlayWav_MaxChannels];
+    audio_block_t *queue[channels ];
 	for (unsigned chan = 0; chan < channels; chan++) {
 		queue[chan] = AudioStream::allocate();
 		if (queue[chan] == nullptr) {
