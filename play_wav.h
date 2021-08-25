@@ -40,8 +40,6 @@
 #define APW_ERR_NO_AUDIOBLOCKS  4
 
 
-typedef int16_t _wpsample_t;
-
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
 #else
@@ -77,7 +75,7 @@ public:
 	uint8_t instanceID(void);
 	virtual void update(void);
 private:
-  void begin(void);
+    void begin(void);
 	File wavfile;
 	bool readHeader(int newState);
 	inline void startUsingSPI(void);
@@ -85,7 +83,7 @@ private:
     bool stopInt();
     void startInt(bool enabled);
 	audio_block_t *queue[_AudioPlayWav_MaxChannels];
-	_wpsample_t *buffer = nullptr;	    // buffer data
+	int8_t *buffer = nullptr;	        // buffer data
 	size_t sz_mem = 0;					// Size of allocated memory
 	size_t sz_frame;				    // Size of a sample frame in bytes
 	size_t data_length;		  	        // number of frames remaining in file

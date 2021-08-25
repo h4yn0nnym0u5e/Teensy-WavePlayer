@@ -34,11 +34,15 @@
 #define STATE_PAUSED  1
 #define STATE_PLAY    2
 
-//#define HANDLE_SPI
+//#define HANDLE_SPI    1
+
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
 static const int8_t _AudioPlayWavInstance = 0;
 static const uint8_t _sz_mem_additional = 1;
+#if AUDIO_BLOCK_SAMPLES < 128
+//#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
+#endif
 #else
 static uint8_t _AudioPlayWavInstances = 0;
 static int8_t _AudioPlayWavInstance = -1;
@@ -279,14 +283,13 @@ bool AudioPlayWav::readHeader(int newState)
 
 
     //allocate:
-    buffer = (_wpsample_t*) malloc( sz_mem );
+    buffer =  (int8_t*) malloc( sz_mem );
     if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = APW_ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
-#if 1
 #if !defined(KINETISL)
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immedeately:
@@ -300,23 +303,20 @@ bool AudioPlayWav::readHeader(int newState)
         //inst is now the id of the next running instance.
         if (inst != my_instance) {
             buffer_rd = sz_mem;
-            uint8_t *p = (uint8_t*)&buffer[0];
             do {
                 buffer_rd -= sz_frame * bytes;
                 if (++inst >= _AudioPlayWavInstances) inst = 0;
             } while (inst != my_instance);
-            wavfile.read(&p[buffer_rd], sz_mem - buffer_rd);
+            wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);
         }
-        
+
         state = newState;
         asm("dmb":::"memory");
         startInt(irq);
     } else state = newState;
-#endif
 #else
     state = newState; //this *must* be the last instruction.
 #endif
-
     return true;
 }
 
@@ -328,7 +328,7 @@ void  AudioPlayWav::update(void)
 
 #if defined(KINETISL)
     if ( state != STATE_PLAY ) return;
-    if (1)
+    if ( buffer_rd == 0)
 #else
 	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
         _AudioPlayWavInstance = 0;
@@ -338,13 +338,11 @@ void  AudioPlayWav::update(void)
     if (_AudioPlayWavInstance == my_instance && buffer_rd == 0 )
 #endif
     {
-        size_t wr = buffer_rd * bytes;
-        uint8_t *p = (uint8_t*)buffer;
-        size_t rd = wavfile.read( &p[wr], sz_mem);
+        size_t rd = wavfile.read(buffer, sz_mem);
 
         //when EOF, fill remaining space:
         if ( rd <= sz_mem) {
-            memset( &p[wr+rd], (bytes == 1) ? 128:0 , sz_mem - rd);
+            memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
         }
     }
 
@@ -363,10 +361,9 @@ void  AudioPlayWav::update(void)
 	if (bytes == 2) {
 
 		// 16 bits:
-
-        _wpsample_t *p = &buffer[buffer_rd];
-        buffer_rd += sz_frame;
-        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem ) buffer_rd = 0;
+        int16_t *p = (int16_t*) &buffer[buffer_rd];
+        buffer_rd += sz_frame * 2;
+        if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
         unsigned i = 0;
         do {
@@ -387,10 +384,10 @@ void  AudioPlayWav::update(void)
 
 	} else {
 
-		// 8 bits
-		int8_t *p = (int8_t*) &buffer[buffer_rd];
-		buffer_rd += sz_frame / sizeof(_wpsample_t);
-        if (buffer_rd * sizeof(_wpsample_t) >= sz_mem ) buffer_rd = 0;
+		// 8 bits:
+		int8_t *p = &buffer[buffer_rd];
+		buffer_rd += sz_frame;
+        if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
 		unsigned i = 0;
 		do {
@@ -446,22 +443,22 @@ void AudioPlayWav::startInt(bool enabled)
 inline void AudioPlayWav::startUsingSPI(void)
 {
 #if defined(HANDLE_SPI)
-//#if defined(HAS_KINETIS_SDHC)
-//    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
-//#else
+#if defined(HAS_KINETIS_SDHC)
+   if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
+#else
     AudioStartUsingSPI();
-//#endif
+#endif
 #endif
 }
 
 inline void AudioPlayWav::stopUsingSPI(void)
 {
 #if defined(HANDLE_SPI)
-//#if defined(HAS_KINETIS_SDHC)
-//    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
-//#else
+#if defined(HAS_KINETIS_SDHC)
+    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
+#else
     AudioStopUsingSPI();
-//#endif
+#endif
 #endif
 }
 
