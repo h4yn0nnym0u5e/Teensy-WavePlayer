@@ -346,7 +346,9 @@ void  AudioPlayWav::update(void)
         }
     }
 
+
 	// allocate the audio blocks to transmit
+    audio_block_t *queue[_AudioPlayWav_MaxChannels];
 	for (unsigned chan = 0; chan < channels; chan++) {
 		queue[chan] = AudioStream::allocate();
 		if (queue[chan] == nullptr) {

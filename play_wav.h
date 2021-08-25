@@ -50,7 +50,7 @@
 class AudioPlayWav : public AudioStream
 {
 public:
-	AudioPlayWav(void) : AudioStream(_AudioPlayWav_MaxChannels, queue) { begin(); }
+	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
 	bool play(File file);
 	bool play(File file, bool paused);
 	bool play(const char *filename);
@@ -81,8 +81,7 @@ private:
 	inline void startUsingSPI(void);
 	inline void stopUsingSPI(void);
     bool stopInt();
-    void startInt(bool enabled);
-	audio_block_t *queue[_AudioPlayWav_MaxChannels];
+    void startInt(bool enabled);	
 	int8_t *buffer = nullptr;	        // buffer data
 	size_t sz_mem = 0;					// Size of allocated memory
 	size_t sz_frame;				    // Size of a sample frame in bytes
