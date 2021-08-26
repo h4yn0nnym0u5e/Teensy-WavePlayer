@@ -67,15 +67,15 @@ bool AudioPlayWav::play(File file)
 bool AudioPlayWav::play(File file, const bool paused)
 {
     stop();
-    startUsingSPI();
 
     wavfile = file;
+    startUsingSPI();
+
     if (!readHeader( paused ? STATE_PAUSED : STATE_PLAY ))
     {
         stop();
         return false;
     }
-    last_err = APW_ERR_OK;
     return true;
 }
 
@@ -98,7 +98,6 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
         stop();
         return false;
     }
-    last_err = APW_ERR_OK;
     return true;
 }
 
@@ -113,7 +112,8 @@ void AudioPlayWav::stop(void)
 
     stopUsingSPI();
 
-    if (buffer) {
+    if (buffer)
+    {
         free(buffer);
         buffer = nullptr;
         sz_mem = 0;
@@ -146,7 +146,7 @@ typedef struct {
 } tFileHeader;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformat
-typedef struct __attribute__ ((__packed__))
+typedef struct
 {
   //unsigned long  chunkID;
   //unsigned long  chunkSize;
@@ -194,7 +194,7 @@ typedef struct {
 
 bool AudioPlayWav::readHeader(int newState)
 {
-        
+
     size_t position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
@@ -222,8 +222,7 @@ bool AudioPlayWav::readHeader(int newState)
 	position = sizeof(fileHeader);
     fmtok = false;
 
-    while(true) {
-
+    do {
         irq = stopInt();
         wavfile.seek(position);
         rd = wavfile.read(&dataHeader, sizeof(dataHeader));
@@ -233,8 +232,8 @@ bool AudioPlayWav::readHeader(int newState)
 
         if (dataHeader.chunkID == cFMT) {
             tFmtHeaderEx fmtHeader;
-            memset((void*)&fmtHeader, 0, sizeof(fmtHeader));
-            
+            memset((void*)&fmtHeader, 0, sizeof(tFmtHeaderEx));
+
             //Serial.println(dataHeader.chunkSize);
             irq = stopInt();
             if (dataHeader.chunkSize < 16) {
@@ -257,29 +256,25 @@ bool AudioPlayWav::readHeader(int newState)
             //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
             sample_rate = fmtHeader.dwSamplesPerSec;
             channels = fmtHeader.wChannels;
-            sz_frame = AUDIO_BLOCK_SAMPLES * channels;
-            if (sz_frame == 0) return false;
-            if (bytes > 2) return false;
-            if (channels > _AudioPlayWav_MaxChannels) return false;
+            if (bytes == 0 || bytes > 2) return false;
+            if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
             if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;
             fmtok = true;
         }
         else if (dataHeader.chunkID == cDATA) break;
 
         position += sizeof(dataHeader) + dataHeader.chunkSize;
-
-    };
+    } while(true);
 
     if (fmtok != true) return false;
-    last_err = APW_ERR_OK;
 
+    sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     total_length = dataHeader.chunkSize;
 	data_length = dataHeader.chunkSize / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
     sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
     sz_mem *= _sz_mem_additional;
-
 
     //allocate:
     buffer =  (int8_t*) malloc( sz_mem );
@@ -288,6 +283,8 @@ bool AudioPlayWav::readHeader(int newState)
 		last_err = APW_ERR_OUT_OF_MEMORY;
 		return false;
 	}
+
+    last_err = APW_ERR_OK;
 
 #if !defined(KINETISL)
     if (_AudioPlayWavInstances > 1) {
@@ -310,9 +307,12 @@ bool AudioPlayWav::readHeader(int newState)
         }
 
         state = newState;
+
         asm("dmb":::"memory");
         startInt(irq);
-    } else state = newState;
+
+    } else
+        state = newState;
 #else
     state = newState; //this *must* be the last instruction.
 #endif
@@ -340,7 +340,7 @@ void  AudioPlayWav::update(void)
         size_t rd = wavfile.read(buffer, sz_mem);
 
         //when EOF, fill remaining space:
-        if ( rd <= sz_mem) {
+        if ( rd < sz_mem) {
             memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
         }
     }
@@ -359,7 +359,8 @@ void  AudioPlayWav::update(void)
 	}
 
 	// copy the samples to the audio blocks:
-	if (bytes == 2) {
+	if (bytes == 2)
+    {
 
 		// 16 bits:
         int16_t *p = (int16_t*) &buffer[buffer_rd];
@@ -383,7 +384,8 @@ void  AudioPlayWav::update(void)
         } while (i < AUDIO_BLOCK_SAMPLES);
 
 
-	} else {
+	} else
+    {
 
 		// 8 bits:
 		int8_t *p = &buffer[buffer_rd];
@@ -392,7 +394,6 @@ void  AudioPlayWav::update(void)
 
 		unsigned i = 0;
 		do {
-
 			unsigned chan = 0;
 			do {
 				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
@@ -405,13 +406,15 @@ void  AudioPlayWav::update(void)
 			} while (++chan < channels);
 
 			i += 2;
+
 		} while (i < AUDIO_BLOCK_SAMPLES);
 
 	}
 
 
 	// transmit them:
-	for (unsigned chan = 0; chan < channels; chan++) {
+	for (unsigned chan = 0; chan < channels; chan++)
+    {
 		AudioStream::transmit(queue[chan], chan);
 		AudioStream::release(queue[chan]);
 	}
@@ -427,7 +430,8 @@ end:  // end of file reached or other reason to stop
 
 bool AudioPlayWav::stopInt()
 {
-    if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) ) {
+    if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
+    {
         NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
         asm("dmb":::"memory");
         return true;
@@ -441,7 +445,7 @@ void AudioPlayWav::startInt(bool enabled)
         NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
 }
 
-inline void AudioPlayWav::startUsingSPI(void)
+void AudioPlayWav::startUsingSPI(void)
 {
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
@@ -452,7 +456,7 @@ inline void AudioPlayWav::startUsingSPI(void)
 #endif
 }
 
-inline void AudioPlayWav::stopUsingSPI(void)
+void AudioPlayWav::stopUsingSPI(void)
 {
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
@@ -479,14 +483,20 @@ bool AudioPlayWav::isPlaying(void)
 
 void AudioPlayWav::togglePlayPause(void)
 {
-    if (state == STATE_STOP) return;
-    state = (state == STATE_PLAY) ? STATE_PAUSED : STATE_PLAY;
+    pause(state == STATE_PLAY);
 }
 
 void AudioPlayWav::pause(const bool pause)
 {
     if (state == STATE_STOP) return;
-    state = (pause) ? STATE_PAUSED : STATE_PLAY;
+    if (pause)
+    {
+        state = STATE_PAUSED;
+        stopUsingSPI();
+    } else {
+        state = STATE_PLAY;
+        startUsingSPI();
+    }
 }
 
 bool AudioPlayWav::isPaused(void)

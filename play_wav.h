@@ -76,12 +76,12 @@ public:
 	virtual void update(void);
 private:
     void begin(void);
-	File wavfile;
 	bool readHeader(int newState);
-	inline void startUsingSPI(void);
-	inline void stopUsingSPI(void);
-    bool stopInt();
-    void startInt(bool enabled);	
+	void startUsingSPI(void);
+	void stopUsingSPI(void);
+    bool stopInt(void);
+    void startInt(bool enabled);
+	File wavfile;
 	int8_t *buffer = nullptr;	        // buffer data
 	size_t sz_mem = 0;					// Size of allocated memory
 	size_t sz_frame;				    // Size of a sample frame in bytes
