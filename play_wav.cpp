@@ -435,7 +435,6 @@ bool AudioPlayWav::stopInt()
     if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
     {
         NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
-        asm("dmb":::"memory");
         return true;
     }
     return false;
