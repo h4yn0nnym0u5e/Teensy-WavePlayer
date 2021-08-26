@@ -367,7 +367,7 @@ void  AudioPlayWav::update(void)
         buffer_rd += sz_frame * 2;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
         
-        __builtin_prefetch(&buffer[buffer_rd]);
+        __builtin_prefetch(p);
         unsigned i = 0;
         do {
             unsigned chan = 0;
@@ -393,7 +393,7 @@ void  AudioPlayWav::update(void)
 		buffer_rd += sz_frame;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
-        __builtin_prefetch(&buffer[buffer_rd]);
+        __builtin_prefetch(p);
 		unsigned i = 0;
 		do {
 			unsigned chan = 0;
