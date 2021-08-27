@@ -85,7 +85,7 @@ private:
 	int8_t *buffer = nullptr;	        // buffer data
 	size_t sz_mem = 0;					// Size of allocated memory
 	size_t sz_frame;				    // Size of a sample frame in bytes
-	size_t data_length;		  	        // number of frames remaining in file
+	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	size_t total_length = 0;			// number of audio data bytes in file
 	unsigned int sample_rate = 0;

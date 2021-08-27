@@ -49,6 +49,7 @@ static int8_t _AudioPlayWavInstance = -1;
 static uint8_t _sz_mem_additional = 1;
 #endif
 
+
 FLASHMEM
 void AudioPlayWav::begin(void)
 {
@@ -308,7 +309,6 @@ bool AudioPlayWav::readHeader(int newState)
 
         state = newState;
 
-        asm("dmb":::"memory");
         startInt(irq);
 
     } else
@@ -318,7 +318,6 @@ bool AudioPlayWav::readHeader(int newState)
 #endif
     return true;
 }
-
 
 
 __attribute__((hot))
@@ -340,37 +339,41 @@ void  AudioPlayWav::update(void)
         size_t rd = wavfile.read(buffer, sz_mem);
 
         //when EOF, fill remaining space:
-        if ( rd < sz_mem) {
+        if ( rd < sz_mem ) {
             memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
         }
     }
-
+    
+    unsigned int chan;
 
 	// allocate the audio blocks to transmit
-    audio_block_t *queue[channels ];
-	for (unsigned chan = 0; chan < channels; chan++) {
+    audio_block_t *queue[channels];
+    chan = 0;
+    do {
 		queue[chan] = AudioStream::allocate();
-		if (queue[chan] == nullptr) {
-			for (unsigned i = 0; i < chan; i++) AudioStream::release(queue[i]);
+		if ( (queue[chan] == nullptr) ) {
+			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
 			last_err = APW_ERR_NO_AUDIOBLOCKS;
 			//Serial.println("Waveplayer stopped: not enough AudioMemory().");
-			goto end;
+			stop();
+            return;
 		}
-	}
+	} while (++chan < channels);
+
 
 	// copy the samples to the audio blocks:
 	if (bytes == 2)
     {
 
 		// 16 bits:
-        int16_t *p = (int16_t*) &buffer[buffer_rd];        
+        int16_t *p = (int16_t*) &buffer[buffer_rd];
         buffer_rd += sz_frame * 2;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
-        
+
         __builtin_prefetch(p);
-        unsigned i = 0;
+        size_t i = 0;
         do {
-            unsigned chan = 0;
+            chan = 0;
             do {
                 queue[chan]->data[i] = *p++;
             } while (++chan < channels);
@@ -394,9 +397,9 @@ void  AudioPlayWav::update(void)
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
         __builtin_prefetch(p);
-		unsigned i = 0;
+		size_t i = 0;
 		do {
-			unsigned chan = 0;
+			chan = 0;
 			do {
 				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
 			} while (++chan < channels);
@@ -415,19 +418,16 @@ void  AudioPlayWav::update(void)
 
 
 	// transmit them:
-	for (unsigned chan = 0; chan < channels; chan++)
+    chan = 0;
+    do
     {
 		AudioStream::transmit(queue[chan], chan);
 		AudioStream::release(queue[chan]);
-	}
-
+	} while (++chan < channels);
+    
     //Serial.printf("%d\n",data_length);
-	if (--data_length > 0)
-        return;
-
-end:  // end of file reached or other reason to stop
-    stop();
-    return;
+    --data_length;
+	if (data_length <= 0) stop();
 }
 
 bool AudioPlayWav::stopInt()
@@ -495,8 +495,8 @@ void AudioPlayWav::pause(const bool pause)
         state = STATE_PAUSED;
         stopUsingSPI();
     } else {
-        state = STATE_PLAY;
         startUsingSPI();
+        state = STATE_PLAY;
     }
 }
 
