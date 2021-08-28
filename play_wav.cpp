@@ -34,7 +34,7 @@
 #define STATE_PAUSED  1
 #define STATE_PLAY    2
 
-//#define HANDLE_SPI    1
+//#define HANDLE_SPI    1 //TODO...
 
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
@@ -343,7 +343,7 @@ void  AudioPlayWav::update(void)
             memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
         }
     }
-    
+
     unsigned int chan;
 
 	// allocate the audio blocks to transmit
@@ -424,7 +424,7 @@ void  AudioPlayWav::update(void)
 		AudioStream::transmit(queue[chan], chan);
 		AudioStream::release(queue[chan]);
 	} while (++chan < channels);
-    
+
     //Serial.printf("%d\n",data_length);
     --data_length;
 	if (data_length <= 0) stop();
@@ -448,6 +448,8 @@ void AudioPlayWav::startInt(bool enabled)
 
 void AudioPlayWav::startUsingSPI(void)
 {
+//TODO... https://forum.pjrc.com/threads/67989-Teensyduino-1-55-Beta-1?p=287023&viewfull=1#post287023
+//this must be smarter.
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
@@ -458,7 +460,7 @@ void AudioPlayWav::startUsingSPI(void)
 }
 
 void AudioPlayWav::stopUsingSPI(void)
-{
+{ //TODO...
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
     if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
@@ -468,14 +470,14 @@ void AudioPlayWav::stopUsingSPI(void)
 #endif
 }
 
-#if !defined(KINETISL)
-bool AudioPlayWav::addMemoryForRead(size_t mult)
+bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
 {
+#if !defined(KINETISL)
     if (mult < 1) mult = 1;
 	_sz_mem_additional = mult;
+#endif
 	return true;
 }
-#endif
 
 bool AudioPlayWav::isPlaying(void)
 {
@@ -490,6 +492,7 @@ void AudioPlayWav::togglePlayPause(void)
 void AudioPlayWav::pause(const bool pause)
 {
     if (state == STATE_STOP) return;
+    bool irq = stopInt();
     if (pause)
     {
         state = STATE_PAUSED;
@@ -498,6 +501,7 @@ void AudioPlayWav::pause(const bool pause)
         startUsingSPI();
         state = STATE_PLAY;
     }
+    startInt(irq);
 }
 
 bool AudioPlayWav::isPaused(void)
@@ -511,11 +515,33 @@ bool AudioPlayWav::isStopped(void)
     return (state == STATE_STOP);
 }
 
+__attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("ldrex %0, [%1]" : "=r" (result) : "r" (addr) );
+   return(result);
+}
+
+__attribute__( ( always_inline ) ) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
+   return(result);
+}
 
 uint32_t AudioPlayWav::positionMillis(void)
 {
-    return (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) *
-        (total_length / (bytes * sz_frame) - data_length);
+    uint32_t safe_read, ret;
+    //use an interrupt detector to make sure all vars are consistent.
+    //strex will fail if an interrupt occured. An other way would be to block audio interrupts.
+    do
+    {
+        __ldrexw(&safe_read);
+        ret = (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) *
+              (total_length / (bytes * sz_frame) - data_length);
+	} while ( __strexw(1, &safe_read));
+
+    return ret;
 }
 
 

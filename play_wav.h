@@ -55,9 +55,7 @@ public:
 	bool play(File file, bool paused);
 	bool play(const char *filename);
 	bool play(const char *filename, bool paused); //start in paused state?
-#if !defined(KINETISL)
 	bool addMemoryForRead(size_t mult); //add memory
-#endif
 	void togglePlayPause(void);
 	void pause(bool pause);
 	void stop(void);
