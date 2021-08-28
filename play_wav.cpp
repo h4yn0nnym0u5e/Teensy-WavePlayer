@@ -38,7 +38,7 @@
 
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
-static const int8_t _AudioPlayWavInstance = 0;
+//static const int8_t _AudioPlayWavInstance = 0;
 static const uint8_t _sz_mem_additional = 1;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
@@ -346,7 +346,7 @@ void  AudioPlayWav::update(void)
 
     unsigned int chan;
 
-	// allocate the audio blocks to transmit
+	// allocate the audio blocks to transmit 
     audio_block_t *queue[channels];
     chan = 0;
     do {
@@ -515,6 +515,9 @@ bool AudioPlayWav::isStopped(void)
     return (state == STATE_STOP);
 }
 
+#define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * sz_frame) - data_length))
+
+#if !defined(KINETISL)
 __attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)
 {
    uint32_t result;
@@ -537,13 +540,22 @@ uint32_t AudioPlayWav::positionMillis(void)
     do
     {
         __ldrexw(&safe_read);
-        ret = (AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) *
-              (total_length / (bytes * sz_frame) - data_length);
+        ret = _positionMillis();
 	} while ( __strexw(1, &safe_read));
 
     return ret;
 }
-
+#else
+uint32_t AudioPlayWav::positionMillis(void)
+{
+    bool irq;
+    uint32_t ret;
+    irq = stopInt();
+    ret = _positionMillis();
+    startInt(irq);
+    return ret;
+}
+#endif
 
 uint32_t AudioPlayWav::lengthMillis(void)
 {
