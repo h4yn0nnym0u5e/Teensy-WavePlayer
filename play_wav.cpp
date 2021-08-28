@@ -333,7 +333,7 @@ void  AudioPlayWav::update(void)
 
     if ( state != STATE_PLAY ) return;
 
-    if (_AudioPlayWavInstance == my_instance && buffer_rd == 0 )
+    if (/*_AudioPlayWavInstance == my_instance &&*/ buffer_rd == 0 )
 #endif
     {
         size_t rd = wavfile.read(buffer, sz_mem);
