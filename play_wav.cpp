@@ -293,17 +293,9 @@ bool AudioPlayWav::readHeader(int newState)
         //The next instanceID is random. If it is not our instance, we have to fill the buffer with enough data.
 
         irq = stopInt();
-
-        int inst = _AudioPlayWavInstance + 1;
-        if (inst >= _AudioPlayWavInstances) inst = 0;
-
-        //inst is now the id of the next running instance.
+        //audio iq is stopped. the next running instance is always 0
         if (inst != my_instance) {
-            buffer_rd = sz_mem;
-            do {
-                buffer_rd -= sz_frame * bytes;
-                if (++inst >= _AudioPlayWavInstances) inst = 0;
-            } while (inst != my_instance);
+            buffer_rd = sz_mem - sz_frame * bytes * my_instance;
             wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);
         }
 
