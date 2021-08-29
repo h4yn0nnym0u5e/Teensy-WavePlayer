@@ -557,3 +557,8 @@ uint8_t AudioPlayWav::instanceID(void)
 {
 	return my_instance;
 }
+
+File AudioPlayWav::file(void)
+{
+    return wavfile;
+}

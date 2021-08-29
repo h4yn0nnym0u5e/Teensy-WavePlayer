@@ -80,6 +80,7 @@ public:
 	uint8_t lastErr(void);              // returns last error
 	size_t memUsed(void);
 	uint8_t instanceID(void);
+    File file(void);
 	virtual void update(void);
 private:
     void begin(void);
