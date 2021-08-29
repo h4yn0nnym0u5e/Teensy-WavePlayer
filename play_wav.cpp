@@ -1,6 +1,13 @@
-/* Audio Library for Teensy
+/* 
+   Wavefile player 
+   Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
+   
+   for 
+   
+   Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
+   
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -22,9 +29,11 @@
    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
    THE SOFTWARE.
-*/
 
-// (c) Frank Bösing, 07/2021
+
+   Addition by Frank Bösing:
+   Use of this code (wavefile player) permitted for use with hardware developed by PJRC only.
+*/
 
 #include "play_wav.h"
 #include <spi_interrupt.h>
@@ -309,17 +318,7 @@ bool AudioPlayWav::readHeader(int newState)
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-
     if ( state != STATE_PLAY ) return;
-    if ( buffer_rd == 0)
-    {
-        size_t rd = wavfile.read(buffer, sz_mem);
-
-        //when EOF, fill remaining space:
-        if ( rd < sz_mem ) {
-            memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
-        }
-    }
 
     unsigned int chan;
 
@@ -335,15 +334,22 @@ void  AudioPlayWav::update(void)
 			stop();
             return;
 		}
-        __builtin_prefetch(&queue[chan]->data[0], 1);
 	} while (++chan < channels);
 
+    //read the data
+    if ( buffer_rd == 0)
+    {
+        size_t rd = wavfile.read(buffer, sz_mem);
+        //when EOF, fill remaining space:
+        if ( rd < sz_mem )
+            memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
+    }
 
 	// copy the samples to the audio blocks:
 	if (bytes == 2)
     {
 		// 16 bits:
-        int16_t *p = (int16_t*) &buffer[buffer_rd];
+        int16_t *p = (int16_t*) &buffer[buffer_rd];        
         buffer_rd += sz_frame * 2;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
