@@ -288,11 +288,11 @@ bool AudioPlayWav::readHeader(int newState)
 #if !defined(KINETISL)
     if (my_instance > 0) {
         //For sync start, and to start immedeately:
-        
+
         irq = stopInt();
-        //audio iq is stopped. the next running instance is always 0        
+        //audio iq is stopped. the next running instance is always 0
         buffer_rd = sz_mem - sz_frame * bytes * my_instance;
-        wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);        
+        wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);
 
         state = newState;
         startInt(irq);
@@ -323,7 +323,7 @@ void  AudioPlayWav::update(void)
 
     unsigned int chan;
 
-	// allocate the audio blocks to transmit 
+	// allocate the audio blocks to transmit
     audio_block_t *queue[channels];
     chan = 0;
     do {
@@ -342,7 +342,6 @@ void  AudioPlayWav::update(void)
 	// copy the samples to the audio blocks:
 	if (bytes == 2)
     {
-
 		// 16 bits:
         int16_t *p = (int16_t*) &buffer[buffer_rd];
         buffer_rd += sz_frame * 2;
@@ -354,20 +353,10 @@ void  AudioPlayWav::update(void)
             do {
                 queue[chan]->data[i] = *p++;
             } while (++chan < channels);
-
-            chan = 0;
-            do {
-                queue[chan]->data[i + 1] = *p++;
-            } while (++chan < channels);
-
-            i+=2;
-
-        } while (i < AUDIO_BLOCK_SAMPLES);
-
+        } while (++i < AUDIO_BLOCK_SAMPLES);
 
 	} else
     {
-
 		// 8 bits:
 		int8_t *p = &buffer[buffer_rd];
 		buffer_rd += sz_frame;
@@ -379,17 +368,7 @@ void  AudioPlayWav::update(void)
 			do {
 				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
 			} while (++chan < channels);
-
-			chan = 0;
-			do {
-
-				queue[chan]->data[i + 1] = ( *p++ - 128 ) << 8;
-			} while (++chan < channels);
-
-			i += 2;
-
-		} while (i < AUDIO_BLOCK_SAMPLES);
-
+		} while (++i < AUDIO_BLOCK_SAMPLES);
 	}
 
 
