@@ -288,19 +288,15 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_OK;
 
 #if !defined(KINETISL)
-    if (_AudioPlayWavInstances > 1) {
+    if (my_instance > 0) {
         //For sync start, and to start immedeately:
-        //The next instanceID is random. If it is not our instance, we have to fill the buffer with enough data.
-
+        
         irq = stopInt();
-        //audio iq is stopped. the next running instance is always 0
-        if (inst != my_instance) {
-            buffer_rd = sz_mem - sz_frame * bytes * my_instance;
-            wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);
-        }
+        //audio iq is stopped. the next running instance is always 0        
+        buffer_rd = sz_mem - sz_frame * bytes * my_instance;
+        wavfile.read(&buffer[buffer_rd], sz_mem - buffer_rd);        
 
         state = newState;
-
         startInt(irq);
 
     } else
@@ -350,6 +346,7 @@ void  AudioPlayWav::update(void)
 			stop();
             return;
 		}
+        __builtin_prefetch(&queue[chan]->data[0], 1);
 	} while (++chan < channels);
 
 
@@ -362,7 +359,6 @@ void  AudioPlayWav::update(void)
         buffer_rd += sz_frame * 2;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
-        __builtin_prefetch(p);
         size_t i = 0;
         do {
             chan = 0;
@@ -388,7 +384,6 @@ void  AudioPlayWav::update(void)
 		buffer_rd += sz_frame;
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
-        __builtin_prefetch(p);
 		size_t i = 0;
 		do {
 			chan = 0;
