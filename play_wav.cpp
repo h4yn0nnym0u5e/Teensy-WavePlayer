@@ -38,14 +38,12 @@
 
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
-//static const int8_t _AudioPlayWavInstance = 0;
 static const uint8_t _sz_mem_additional = 1;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
 #endif
 #else
 static uint8_t _AudioPlayWavInstances = 0;
-static int8_t _AudioPlayWavInstance = -1;
 static uint8_t _sz_mem_additional = 1;
 #endif
 
@@ -312,17 +310,8 @@ __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
 
-#if defined(KINETISL)
     if ( state != STATE_PLAY ) return;
     if ( buffer_rd == 0)
-#else
-	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
-        _AudioPlayWavInstance = 0;
-
-    if ( state != STATE_PLAY ) return;
-
-    if (/*_AudioPlayWavInstance == my_instance &&*/ buffer_rd == 0 )
-#endif
     {
         size_t rd = wavfile.read(buffer, sz_mem);
 
