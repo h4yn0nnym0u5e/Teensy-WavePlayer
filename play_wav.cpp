@@ -1,6 +1,13 @@
-/* Audio Library for Teensy
+/* 
+   Wavefile player 
+   Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
+   
+   for 
+   
+   Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
+   
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -22,9 +29,11 @@
    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
    THE SOFTWARE.
-*/
 
-// (c) Frank Bösing, 07/2021
+
+   Addition by Frank Bösing:
+   Use of this code (wavefile player) permitted for use with hardware developed by PJRC only.
+*/
 
 #include "play_wav.h"
 #include <spi_interrupt.h>
@@ -38,14 +47,12 @@
 
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
-//static const int8_t _AudioPlayWavInstance = 0;
 static const uint8_t _sz_mem_additional = 1;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
 #endif
 #else
 static uint8_t _AudioPlayWavInstances = 0;
-static int8_t _AudioPlayWavInstance = -1;
 static uint8_t _sz_mem_additional = 1;
 #endif
 
@@ -295,7 +302,6 @@ bool AudioPlayWav::readHeader(int newState)
 	wavMovr.setPadding((bytes == 1) ? 128:0);
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immediately:
-        //The next instanceID is random. If it is not our instance, we have to fill the buffer with enough data.
 
         irq = stopInt();
 /*
@@ -311,7 +317,6 @@ removed this, complex and can fail to pre-load: not sure why, can't be bothered 
                 if (++inst >= _AudioPlayWavInstances) inst = 0;
             } while (inst != my_instance);
             wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
-        }
 */
 		// Simplified calculation of how much buffer to pre-load, from all down
 		// to 1/Nth depending on the instance number. This sort of works, but
@@ -323,7 +328,6 @@ removed this, complex and can fail to pre-load: not sure why, can't be bothered 
 		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
         wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
-
         startInt(irq);
 
     } else
@@ -369,7 +373,7 @@ void  AudioPlayWav::update(void)
 	else
 		currentPos += buffer_rd; // position in buffer
 
-	// allocate the audio blocks to transmit 
+	// allocate the audio blocks to transmit
     audio_block_t *queue[channels];
     chan = 0;
     do {
@@ -387,7 +391,6 @@ void  AudioPlayWav::update(void)
 	// copy the samples to the audio blocks:
 	if (bytes == 2)
     {
-
 		// 16 bits:
         int16_t *p = (int16_t*) currentPos;
         buffer_rd += sz_frame * 2;
@@ -400,20 +403,10 @@ void  AudioPlayWav::update(void)
             do {
                 queue[chan]->data[i] = *p++;
             } while (++chan < channels);
-
-            chan = 0;
-            do {
-                queue[chan]->data[i + 1] = *p++;
-            } while (++chan < channels);
-
-            i+=2;
-
-        } while (i < AUDIO_BLOCK_SAMPLES);
-
+        } while (++i < AUDIO_BLOCK_SAMPLES);
 
 	} else
     {
-
 		// 8 bits:
 		int8_t *p = currentPos;
 		buffer_rd += sz_frame;
@@ -427,16 +420,7 @@ void  AudioPlayWav::update(void)
 				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
 			} while (++chan < channels);
 
-			chan = 0;
-			do {
-
-				queue[chan]->data[i + 1] = ( *p++ - 128 ) << 8;
-			} while (++chan < channels);
-
-			i += 2;
-
-		} while (i < AUDIO_BLOCK_SAMPLES);
-
+		} while (++i < AUDIO_BLOCK_SAMPLES);
 	}
 
 
@@ -638,6 +622,11 @@ size_t AudioPlayWav::memRead(void)
 uint8_t AudioPlayWav::instanceID(void)
 {
 	return my_instance;
+}
+
+File AudioPlayWav::file(void)
+{
+    return wavfile;
 }
 
 uint32_t AudioPlayWav::filePos(void)
