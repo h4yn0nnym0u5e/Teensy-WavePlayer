@@ -1,13 +1,13 @@
-/* 
-   Wavefile player 
+/*
+   Wavefile player
    Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
-   
-   for 
-   
+
+   for
+
    Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
-   
+
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -38,6 +38,9 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
+//extern "C" {
+//extern const int16_t ulaw_decode_table[256];
+//};
 
 #define STATE_STOP    0
 #define STATE_PAUSED  1
@@ -55,6 +58,40 @@ static const uint8_t _sz_mem_additional = 1;
 static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
 #endif
+
+
+__attribute__((hot))
+void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+
+__attribute__((hot))
+void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+
+    int16_t *p = (int16_t*) &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = *p++;
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
 
 
 FLASHMEM
@@ -203,7 +240,7 @@ typedef struct {
 bool AudioPlayWav::readHeader(int newState)
 {
 
-    size_t position, rd;
+    size_t sz_frame, position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
     bool irq, fmtok;
@@ -294,6 +331,10 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
+    if (bytes == 1) decoder = &decode_8bit;
+    else
+    if (bytes == 2) decoder = &decode_16bit;
+
 #if !defined(KINETISL)
     if (my_instance > 0) {
         //For sync start, and to start immedeately:
@@ -313,7 +354,6 @@ bool AudioPlayWav::readHeader(int newState)
 #endif
     return true;
 }
-
 
 __attribute__((hot))
 void  AudioPlayWav::update(void)
@@ -346,37 +386,8 @@ void  AudioPlayWav::update(void)
     }
 
 	// copy the samples to the audio blocks:
-	if (bytes == 2)
-    {
-		// 16 bits:
-        int16_t *p = (int16_t*) &buffer[buffer_rd];        
-        buffer_rd += sz_frame * 2;
-        if (buffer_rd >= sz_mem ) buffer_rd = 0;
-
-        size_t i = 0;
-        do {
-            chan = 0;
-            do {
-                queue[chan]->data[i] = *p++;
-            } while (++chan < channels);
-        } while (++i < AUDIO_BLOCK_SAMPLES);
-
-	} else
-    {
-		// 8 bits:
-		int8_t *p = &buffer[buffer_rd];
-		buffer_rd += sz_frame;
-        if (buffer_rd >= sz_mem ) buffer_rd = 0;
-
-		size_t i = 0;
-		do {
-			chan = 0;
-			do {
-				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-			} while (++chan < channels);
-		} while (++i < AUDIO_BLOCK_SAMPLES);
-	}
-
+    decoder(buffer, &buffer_rd, queue, channels);
+    if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
 	// transmit them:
     chan = 0;
@@ -476,7 +487,7 @@ bool AudioPlayWav::isStopped(void)
     return (state == STATE_STOP);
 }
 
-#define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * sz_frame) - data_length))
+#define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
 
 #if !defined(KINETISL)
 __attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)
