@@ -1,13 +1,13 @@
-/* 
-   Wavefile player 
+/*
+   Wavefile player
    Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
-   
-   for 
-   
+
+   for
+
    Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
-   
+
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -38,6 +38,9 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
+//extern "C" {
+//extern const int16_t ulaw_decode_table[256];
+//};
 
 #define STATE_STOP    0
 #define STATE_PAUSED  1
@@ -69,6 +72,39 @@ bool WavMover::play(File file)
 	return true;
 }
 //----------------------------------------------------------------------------------------------------
+
+__attribute__((hot))
+void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+
+__attribute__((hot))
+void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+
+    int16_t *p = (int16_t*) &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = *p++;
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
 
 
 FLASHMEM
@@ -211,7 +247,7 @@ typedef struct {
 bool AudioPlayWav::readHeader(int newState)
 {
 
-    size_t position, rd;
+    size_t sz_frame, position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
     bool irq, fmtok;
@@ -298,26 +334,17 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
+    if (bytes == 1) decoder = &decode_8bit;
+    else
+    if (bytes == 2) decoder = &decode_16bit;
+
 #if !defined(KINETISL)
 	wavMovr.setPadding((bytes == 1) ? 128:0);
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immediately:
 
         irq = stopInt();
-/*
-removed this, complex and can fail to pre-load: not sure why, can't be bothered to analyse it!
-        int inst = _AudioPlayWavInstance + 1;
-        if (inst >= _AudioPlayWavInstances) inst = 0;
 
-        //inst is now the id of the next running instance.
-        if (inst != my_instance) {
-            buffer_rd = sz_mem;
-            do {
-                buffer_rd -= sz_frame * bytes;
-                if (++inst >= _AudioPlayWavInstances) inst = 0;
-            } while (inst != my_instance);
-            wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
-*/
 		// Simplified calculation of how much buffer to pre-load, from all down
 		// to 1/Nth depending on the instance number. This sort of works, but
 		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the 
@@ -338,32 +365,11 @@ removed this, complex and can fail to pre-load: not sure why, can't be bothered 
     return true;
 }
 
-
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
     if ( state != STATE_PLAY ) return;
-/*
-#if defined(KINETISL)
-    if ( state != STATE_PLAY ) return;
-    if ( buffer_rd == 0)
-#else
-	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
-        _AudioPlayWavInstance = 0;
 
-    if ( state != STATE_PLAY ) return;
-
-    if (/ *_AudioPlayWavInstance == my_instance &&* / buffer_rd == 0 )
-#endif
-    {
-        size_t rd = wavfile.read(buffer, sz_mem);
-
-        //when EOF, fill remaining space:
-        if ( rd < sz_mem ) {
-            memset(&buffer[rd], (bytes == 1) ? 128:0 , sz_mem - rd);
-        }
-    }
-*/
     unsigned int chan;
 	int8_t* currentPos = wavMovr.getBuffer(); // buffer pointer: don't cache, could change in the future
 	size_t sz_mem = wavMovr.getBufferSize();
@@ -389,40 +395,8 @@ void  AudioPlayWav::update(void)
 
 
 	// copy the samples to the audio blocks:
-	if (bytes == 2)
-    {
-		// 16 bits:
-        int16_t *p = (int16_t*) currentPos;
-        buffer_rd += sz_frame * 2;
+    decoder(buffer, &buffer_rd, queue, channels);
         if (buffer_rd >= sz_mem ) buffer_rd = 0;
-
-        __builtin_prefetch(p);
-        size_t i = 0;
-        do {
-            chan = 0;
-            do {
-                queue[chan]->data[i] = *p++;
-            } while (++chan < channels);
-        } while (++i < AUDIO_BLOCK_SAMPLES);
-
-	} else
-    {
-		// 8 bits:
-		int8_t *p = currentPos;
-		buffer_rd += sz_frame;
-        if (buffer_rd >= sz_mem ) buffer_rd = 0;
-
-        __builtin_prefetch(p);
-		size_t i = 0;
-		do {
-			chan = 0;
-			do {
-				queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-			} while (++chan < channels);
-
-		} while (++i < AUDIO_BLOCK_SAMPLES);
-	}
-
 
 	// transmit them:
     chan = 0;
@@ -440,10 +414,6 @@ void  AudioPlayWav::update(void)
 #if defined(KINETISL)
     if ( buffer_rd == 0)
 #else
-	if (++_AudioPlayWavInstance >= _AudioPlayWavInstances)
-        _AudioPlayWavInstance = 0;
-
-
     if (/*_AudioPlayWavInstance == my_instance &&*/ buffer_rd == 0 )
 #endif
     {
@@ -537,7 +507,7 @@ bool AudioPlayWav::isStopped(void)
     return (state == STATE_STOP);
 }
 
-#define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * sz_frame) - data_length))
+#define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
 
 #if !defined(KINETISL)
 __attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)

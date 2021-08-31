@@ -225,11 +225,11 @@ private:
 	void stopUsingSPI(void);
     bool stopInt(void);
     void startInt(bool enabled);
+    void (*decoder)(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels);
 	WavMover wavMovr;
 	//File wavfile;
 	//int8_t *buffer = nullptr;	        // buffer data
 	//size_t sz_mem = 0;				// Size of allocated memory
-	size_t sz_frame;				    // Size of a sample frame in bytes
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	size_t total_length = 0;			// number of audio data bytes in file
