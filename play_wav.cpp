@@ -1,4 +1,4 @@
-/* 
+/*
    Wavefile player
    Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
 
