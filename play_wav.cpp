@@ -384,8 +384,6 @@ void  AudioPlayWav::update(void)
 	
 	if (nullptr == currentPos)
 		return;
-	else
-		currentPos += buffer_rd; // position in buffer
 
 	// allocate the audio blocks to transmit
     audio_block_t *queue[channels];
@@ -403,8 +401,8 @@ void  AudioPlayWav::update(void)
 
 
 	// copy the samples to the audio blocks:
-    decoder(buffer, &buffer_rd, queue, channels);
-        if (buffer_rd >= sz_mem ) buffer_rd = 0;
+    decoder(currentPos, &buffer_rd, queue, channels);
+    if (buffer_rd >= sz_mem ) buffer_rd = 0;
 
 	// transmit them:
     chan = 0;
