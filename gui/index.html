@@ -495,7 +495,7 @@ span.mainfunction {color: #993300; font-weight: bolder}
 		{"type":"AudioAmplifier","data":{"defaults":{"name":{"value":"new"}},"shortName":"amp","inputs":1,"outputs":1,"category":"mixer-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioMixer4","data":{"defaults":{"name":{"value":"new"}},"shortName":"mixer","inputs":4,"outputs":1,"category":"mixer-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioPlayMemory","data":{"defaults":{"name":{"value":"new"}},"shortName":"playMem","inputs":0,"outputs":1,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},
-		{"type":"AudioPlaySdWav","data":{"defaults":{"name":{"value":"new"}},"shortName":"playSdWav","inputs":0,"outputs":2,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},		
+		{"type":"AudioPlaySdWav","data":{"defaults":{"name":{"value":"new"}},"shortName":"playSdWav","inputs":0,"outputs":2,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioPlayWav","data":{"defaults":{"name":{"value":"new"}},"shortName":"playWav","inputs":0,"outputs":8,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},		
 		{"type":"AudioPlaySdRaw","data":{"defaults":{"name":{"value":"new"}},"shortName":"playSdRaw","inputs":0,"outputs":1,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioPlaySerialflashRaw","data":{"defaults":{"name":{"value":"new"}},"shortName":"playFlashRaw","inputs":0,"outputs":1,"category":"play-function","color":"#E6E0F8","icon":"arrow-in.png"}},
@@ -2479,7 +2479,7 @@ Returns the actual achieved attenuation of the anti-aliasing filter. If the inpu
 	</table>
 	<h3>Functions</h3>
 	<p>This object has no functions to call from the Arduino sketch.  It
-		simply streams from it's 2 input ports to the USB.</p>
+		simply streams from its 2 input ports to the USB.</p>
 	<!--
 	<h3>Hardware</h3>
 	-->
@@ -2718,6 +2718,118 @@ Returns the actual achieved attenuation of the anti-aliasing filter. If the inpu
 		<input type="text" id="node-input-name" placeholder="Name">
 	</div>
 </script>
+
+<!-- ----------------------------------------------------------------------------------------  -->
+<script type="text/x-red" data-help-name="AudioPlayWav">
+	<h3>Summary</h3>
+	<div class=tooltipinfo>
+	<p>Play a WAV file, stored on a SD card, using interleaved reads.</p>
+	</div>
+	<h3>Audio Connections</h3>
+	<table class=doc align=center cellpadding=3>
+		<tr class=top><th>Port</th><th>Purpose</th></tr>
+		<tr class=odd><td align=center>Out 0..7</td><td>Channel 0..7 Output</td></tr>
+	</table>
+	<h3>Functions</h3>
+	<p class=func><span class=keyword>play</span>(filename | File);</p>
+	<p class=desc>Begin playing a WAV file.  If a file is already playing,
+		it is stopped and this file starts playing from the beginning. The file to
+		play may be given by either a character string or an open File object.
+	</p>
+	<p class=func><span class=keyword>play</span>(filename | File,paused);</p>
+	<p class=desc>Begin playing a WAV file.  If a file is already playing,
+		it is stopped and this file starts playing from the beginning. If
+		paused is true then the playing does not start immediately, but
+		can be started and stopped with the pause function.
+	</p>
+	<p class=func><span class=keyword>pause</span>(bool);</p>
+	<p class=desc>Pause or resume playing.  If not playing, this function has no effect. Resumes
+	if bool is false, pauses if bool is true.
+	</p>
+	<p class=func><span class=keyword>stop</span>();</p>
+	<p class=desc>Stop playing.  If not playing or paused, this function has no effect.
+	</p>
+	<p class=func><span class=keyword>isPlaying</span>();</p>
+	<p class=desc>Return true (non-zero) if playing, or false (zero)
+		when stopped or paused.  
+	</p>
+	<p class=func><span class=keyword>isStopped</span>();</p>
+	<p class=desc>Return true (non-zero) if stopped, or false (zero)
+		when playing or paused.  
+	</p>
+	<p class=func><span class=keyword>isPaused</span>();</p>
+	<p class=desc>Return true (non-zero) if paused, or false (zero)
+		when playing or stopped.  
+	</p>
+	<p class=func><span class=keyword>positionMillis</span>();</p>
+	<p class=desc>While playing, return the current time offset, in
+		milliseconds.  When not playing, the return from this function
+		is undefined.
+	</p>
+	<p class=func><span class=keyword>lengthMillis</span>();</p>
+	<p class=desc>Return the total length of the current sound clip,
+		in milliseconds.  When not playing, the return from this function
+		is undefined.
+	</p>
+	<p class=func>static <span class=keyword>addMemoryForRead</span>(mult);</p>
+	<p class=desc>Causes extra buffer memory for pre-loading SD card data
+	to be allocated when play() is called, thus reducing the frequency of SD card accesses. 
+	mult=2 will double the allocated memory, and so on.
+	</p>
+	<p class=func>static <span class=keyword>enableEventReading</span>(bool);</p>
+	<p class=desc>Defaults to false, in which case SD card reads occur within
+	the (interrupt-driven) audio update loop. If set to true then the EventResponder
+	library is used to trigger SD card reads within the foreground code: this requires
+	that loop() exits, or one of yield() or delay() are called within an infinite loop().
+	
+	Event reads generally allow more simultaneous WAV files to be played. This function may
+	be called while one or more files are playing. [DISCLAIMER] there may be audio glitches and/or a loss
+	of synchronisation as a result.
+	</p>
+	<h3>Examples</h3>
+	<p class=exam>File &gt; Examples &gt; Audio &gt; WavFilePlayerI2S
+	</p>
+	<h3>Notes</h3>
+	<p>Only 8- or 16-bit PCM WAV files are supported. 
+		The bit rate of the file must match the configured AUDIO_SAMPLE_RATE.
+		WAV files with from 1 to 8 channels are supported, 
+		with outputs assigned starting from channel 0.
+		Thus stereo WAV files play with the left
+		channel on port 0 and the right channel on port 1.
+	</p>
+	<p>The player attempts to interleave the SD card reads such that simultaneous playback
+	of multiple WAV files does not result in intermittent heavy load on the card, with
+	long idle periods. With enableEventReading set to true, it is easily possible to play 16
+	mono 44kHz 16-bit WAV files at once. Multi-track WAV files also reduce the CPU / SD card load,
+	though they are obviously less flexible.
+	</p>
+	<p>No delay after calling play() is required before
+		isPlaying() returns a valid value, and positionMillis() returns a valid
+		time offset. 
+	</p>
+	<p>While playing, the audio library accesses the SD card automatically.
+		If card access is also required for other purposes, you must
+		<a href="http://www.pjrc.com/teensy/td_libs_AudioProcessorUsage.html" target="_blank">use AudioNoInterrupts()</a>
+		to prevent the library from accessing the SD card while you use it.
+		Disabling the audio library interrupt for too long may cause audible
+		dropouts or glitches.
+	</p>
+	<p>An experimental SD library optimization exists, which can remove these
+		SD library restrictions.  It also allows reliable playback of more
+		files at the same time.  To enable this special code, find and edit
+		the SD_t3.h file within your Arduino folder.  See the comments within
+		that file for details. [Is this true?]
+	</p>
+
+<!-- ----------------------------------------------------------------------------------------  -->
+</script>
+<script type="text/x-red" data-template-name="AudioPlayWav">
+	<div class="form-row">
+		<label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+		<input type="text" id="node-input-name" placeholder="Name">
+	</div>
+</script>
+<!-- ----------------------------------------------------------------------------------------  -->
 
 <script type="text/x-red" data-help-name="AudioPlaySdRaw">
 	<h3>Summary</h3>
@@ -5045,7 +5157,7 @@ double s_freq = .0625;</p>
 	<h3>Summary</h3>
 	<div class=tooltipinfo>
 	<p>Print raw audio data to the Arduino Serial Monitor.  This
-		object creates massive output quickly, and should not normally be used.</p>
+		object can create massive output quickly, and should not normally be used.</p>
 	</div>
 	<h3>Audio Connections</h3>
 	<table class=doc align=center cellpadding=3>
@@ -5054,19 +5166,24 @@ double s_freq = .0625;</p>
 	</table>
 	<h3>Functions</h3>
 	<p class=func><span class=keyword>name</span>(string);</p>
-	<p class=desc>blah blah blah blah
+	<p class=desc>Set name so you know which instance of the object has caused the output
 	</p>
 	<p class=func><span class=keyword>trigger</span>();</p>
-	<p class=desc>blah blah blah blah
+	<p class=desc>Cause output to start, possibly after delay if that's been set
 	</p>
 	<p class=func><span class=keyword>trigger</span>(level, edge);</p>
-	<p class=desc>blah blah blah blah
+	<p class=desc>Not currently implemented
 	</p>
 	<p class=func><span class=keyword>delay</span>(samples);</p>
-	<p class=desc>blah blah blah blah
+	<p class=desc>Delay this many samples before output begins
 	</p>
 	<p class=func><span class=keyword>length</span>(samples);</p>
-	<p class=desc>blah blah blah blah
+	<p class=desc>Total number of samples to output before going idle again
+	</p>
+	<p class=func><span class=keyword>decimate</span>(sample_interval);</p>
+	<p class=desc>Skips &lt;sample_interval - 1&gt; samples between output samples, to 
+	reduce amount of data output to manageable levels. 1 outputs every value, 10 every
+	tenth value, etc. 0 would be a poor choice, and is ignored.
 	</p>
 	<!--
 <h3>Examples</h3>
