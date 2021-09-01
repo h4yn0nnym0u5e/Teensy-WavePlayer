@@ -60,7 +60,7 @@ static uint8_t _sz_mem_additional = 1;
 #endif
 
 //----------------------------------------------------------------------------------------------------
-bool WavMover::eventReadingEnabled = true; //!< true to read in EventResponder, otherwise reads happen under interrupt
+bool WavMover::eventReadingEnabled = false; //!< true to read in EventResponder, otherwise reads happen under interrupt
 /*
  * Initialise utility to move data from SD card to memory (or vice versa in the future?).
  */
