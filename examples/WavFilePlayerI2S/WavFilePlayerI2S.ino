@@ -35,7 +35,7 @@
 AudioPlayWav             playWav;     //xy=323,171
 AudioMixer4              mixer1;         //xy=647,123
 AudioMixer4              mixer3;         //xy=648,212
-AudioOutputPT8211        pt8211_1;       //xy=828,169
+AudioOutputI2S        pt8211_1;       //xy=828,169
 AudioConnection          patchCord1(playWav, 0, mixer1, 0);
 AudioConnection          patchCord2(playWav, 1, mixer3, 0);
 AudioConnection          patchCord3(playWav, 2, mixer1, 1);
@@ -46,6 +46,7 @@ AudioConnection          patchCord7(playWav, 6, mixer1, 3);
 AudioConnection          patchCord8(playWav, 7, mixer3, 3);
 AudioConnection          patchCord9(mixer1, 0, pt8211_1, 0);
 AudioConnection          patchCord10(mixer3, 0, pt8211_1, 1);
+AudioControlSGTL5000     sgtl5000_1;     //xy=853,409
 // GUItool: end automatically generated code
 
 #define SDCARD_CS_PIN    BUILTIN_SDCARD
@@ -68,17 +69,17 @@ void setup() {
 
   SPI.setMOSI(SDCARD_MOSI_PIN);
   SPI.setSCK(SDCARD_SCK_PIN);
-  if (!(SD.begin(SDCARD_CS_PIN))) {
+  while (!(SD.begin(SDCARD_CS_PIN))) {
     // stop here, but print a message repetitively
-    while (1) {
+    //while (1) {
       Serial.println("Unable to access the SD card");
       delay(500);
-    }
+    //}
   }
 
-  // load data from SD file during update() interrupt,
-  // not via EventResponder
-  playWav.enableEventReading(false);
+  sgtl5000_1.enable();
+  sgtl5000_1.volume(0.5);
+ 
 }
 
 void playFile(const char *filename)
@@ -86,20 +87,31 @@ void playFile(const char *filename)
   Serial.print("Playing file: ");
   Serial.println(filename);
   playWav.play(filename);
-  while (playWav.isPlaying()) {}
+  while (playWav.isPlaying()) 
+  {
+    // Needed for EventResponder: could instead call yield(), 
+    // or switch to old scheme of reading SD inside the update() loop
+    // by executing playWav.enableEventReading(false)
+    delay(10); 
+  }
 }
 
 
 void loop() {
-  //playFile("Nums_7dot1_16_44100.wav");
+  playFile("Nums_7dot1_16_44100.wav");
+  delay(500);
   playFile("Nums_7dot1_8_44100.wav");
   delay(500);
-  playFile("SDTEST1.WAV");  // filenames are always uppercase 8.3 format
+  playFile("sine110.wav");
   delay(500);
-  playFile("SDTEST2.WAV");
+  playFile("sine220.wav");
   delay(500);
-  playFile("SDTEST3.WAV");
+  playFile("sine330.wav");
   delay(500);
-  playFile("SDTEST4.WAV");
+  playFile("sine440.wav");
+  delay(500);
+  playFile("sine550.wav");
+  delay(500);
+  playFile("sine660.wav");
   delay(1500);
 }
