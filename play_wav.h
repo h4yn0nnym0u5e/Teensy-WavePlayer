@@ -78,7 +78,8 @@ class AudioPlayWav;
 class WavMover
 {
 public:
-	WavMover() {}
+	WavMover() : buffer{nullptr} {SPTF("Constructing WavMover at %X\r\n",this);}
+	~WavMover() { close(); }
 	bool play(File file); //!< prepare to play a file that's already open
 	
 	// Simple functions we can define immediately:
@@ -149,11 +150,12 @@ public:
 		
 	void setPadding(uint8_t b) { padding = b; }
 	
-	void enableEventReading(bool enable) { eventReadingEnabled = enable; }
+	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
 	
 	operator bool() {return wavfile;}
 	
 	uint32_t lastReadLoad;		//!< CPU load for last SD card read, spread over the number of audio blocks loaded
+	File wavfile;					//!< file if streaming to/from SD card
 	
 private:
 	bool stopInt()
@@ -180,7 +182,6 @@ private:
 		thisWM.read(thisWM.buffer,thisWM.sz_mem);
 	}
 	EventResponder evResp; 			//!< executes data transfer in foreground
-	File wavfile;					//!< file if streaming to/from SD card
 	int8_t* buffer;					//!< buffer to store pre-loaded WAV data
 	size_t sz_mem;					//!< size of buffer	
 	uint8_t padding;				//!< value to pad buffer at EOF
@@ -192,11 +193,12 @@ class AudioPlayWav : public AudioStream
 {
 public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
+	~AudioPlayWav(void) { end(); } // no need to free audio blocks, never permanently allocates any
 	bool play(File file);
 	bool play(File file, bool paused);
 	bool play(const char *filename);
-	bool play(const char *filename, bool paused); //start in paused state?
-	bool addMemoryForRead(size_t mult); //add memory
+	bool play(const char *filename, bool paused); // optional start in paused state
+	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void);
 	void pause(bool pause);
 	void stop(void);
@@ -214,12 +216,13 @@ public:
 	size_t memUsed(void);
 	size_t memRead(void);
 	uint8_t instanceID(void);
-    File file(void);
+	File file(void);
 	virtual void update(void);
-	void enableEventReading(bool enable) { wavMovr.enableEventReading(enable); }
+	static void enableEventReading(bool enable) { WavMover::enableEventReading(enable); }
 	float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad); }
 private:
     void begin(void);
+	void end(void);
 	bool readHeader(int newState);
 	void startUsingSPI(void);
 	void stopUsingSPI(void);

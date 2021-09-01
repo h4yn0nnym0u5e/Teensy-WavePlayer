@@ -60,7 +60,7 @@ static uint8_t _sz_mem_additional = 1;
 #endif
 
 //----------------------------------------------------------------------------------------------------
-static bool WavMover::eventReadingEnabled = true; //!< true to read in EventResponder, otherwise reads happen under interrupt
+bool WavMover::eventReadingEnabled = true; //!< true to read in EventResponder, otherwise reads happen under interrupt
 /*
  * Initialise utility to move data from SD card to memory (or vice versa in the future?).
  */
@@ -114,6 +114,14 @@ void AudioPlayWav::begin(void)
 #if !defined(KINETISL)
     my_instance = _AudioPlayWavInstances;
     ++_AudioPlayWavInstances;
+#endif
+}
+
+void AudioPlayWav::end(void)
+{
+	stop();
+#if !defined(KINETISL)
+    --_AudioPlayWavInstances;
 #endif
 }
 
@@ -411,11 +419,7 @@ void  AudioPlayWav::update(void)
 	if (data_length <= 0) stop();
 	
 	// trigger buffer fill if we just emptied it
-#if defined(KINETISL)
     if ( buffer_rd == 0)
-#else
-    if (/*_AudioPlayWavInstance == my_instance &&*/ buffer_rd == 0 )
-#endif
     {
         wavMovr.readLater();
     }
@@ -596,7 +600,7 @@ uint8_t AudioPlayWav::instanceID(void)
 
 File AudioPlayWav::file(void)
 {
-    return wavfile;
+    return wavMovr.wavfile;
 }
 
 uint32_t AudioPlayWav::filePos(void)
