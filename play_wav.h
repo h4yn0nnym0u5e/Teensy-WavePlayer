@@ -116,7 +116,7 @@ public:
 				memset((int8_t*) buf+result, padding , len - result);				
 			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
 			
-			// % CPU load per track per update cycle
+			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastReadLoad = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
 			
 			return result;
@@ -155,7 +155,7 @@ public:
 	operator bool() {return wavfile;}
 	
 	uint32_t lastReadLoad;		//!< CPU load for last SD card read, spread over the number of audio blocks loaded
-	File wavfile;					//!< file if streaming to/from SD card
+	File wavfile;				//!< file if streaming to/from SD card
 	
 private:
 	bool stopInt()
@@ -219,7 +219,10 @@ public:
 	File file(void);
 	virtual void update(void);
 	static void enableEventReading(bool enable) { WavMover::enableEventReading(enable); }
-	float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad); }
+	float getCPUload() 
+	{ 	// correct for bytes/sample and number of channels in file
+		return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad * bytes * channels); 
+	}  
 private:
     void begin(void);
 	void end(void);
