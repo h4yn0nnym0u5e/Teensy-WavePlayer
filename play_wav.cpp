@@ -38,9 +38,9 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
-//extern "C" {
-//extern const int16_t ulaw_decode_table[256];
-//};
+extern "C" {
+    extern const int16_t ulaw_decode_table[256];
+};
 
 #define STATE_STOP    0
 #define STATE_PAUSED  1
@@ -73,6 +73,7 @@ bool WavMover::play(File file)
 }
 //----------------------------------------------------------------------------------------------------
 
+// 8 bit unsigned:
 __attribute__((hot))
 void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
@@ -89,7 +90,24 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
 
 }
 
+// 8 bit ulaw:
+__attribute__((hot))
+void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
 
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = ulaw_decode_table[*p++];
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+// 16 bit:
 __attribute__((hot))
 void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
@@ -106,7 +124,12 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 
 }
 
+// Todo:
+//- upsampling (CMSIS?)
+//- downsampling (CMSIS?) (is that really needed? pretty inefficient to load way more data than necccessary and downsample then..
+//- play float formats?
 
+//----------------------------------------------------------------------------------------------------
 FLASHMEM
 void AudioPlayWav::begin(void)
 {
@@ -342,12 +365,23 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
-    if (bytes == 1) decoder = &decode_8bit;
-    else
-    if (bytes == 2) decoder = &decode_16bit;
+    wavMovr.setPadding(0);
+    
+    switch(bytes) {
+        case 1: switch (dataFmt) {
+                    
+                    case 0: decoder = &decode_8bit;
+                            wavMovr.setPadding(128);
+                    break;
+                    
+                    case 1: decoder = &decode_8bit_ulaw;
+                    break;
+                }
+        case 2: decoder =  &decode_16bit;                
+                break;
+    }
 
 #if !defined(KINETISL)
-	wavMovr.setPadding((bytes == 1) ? 128:0);
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immediately:
 

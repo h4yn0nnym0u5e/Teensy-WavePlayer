@@ -47,7 +47,7 @@
 #define APW_ERR_FORMAT          1 // not supported Format
 #define APW_ERR_FILE   			2 // File not readable (does it exist?)
 #define APW_ERR_OUT_OF_MEMORY   3 // Not enough dynamic memory available
-#define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audo blocks
+#define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audio blocks
 
 #define xDEBUG_PRINT_PLAYWAV
 #if defined(DEBUG_PRINT_PLAYWAV)
@@ -61,6 +61,9 @@
 #define SPTF(...) 
 #define SFSH(...) 
 #endif  // defined(DEBUG_PRINT_PLAYWAV)
+
+//#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
+
 
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
@@ -78,7 +81,12 @@ class AudioPlayWav;
 class WavMover
 {
 public:
-	WavMover() : buffer{nullptr} {SPTF("Constructing WavMover at %X\r\n",this);}
+	WavMover() : buffer{nullptr} {
+        SPTF("Constructing WavMover at %X\r\n",this);
+        #if defined (DEBUG_PIN_PLAYWAV) 
+            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
+        #endif        
+    }
 	~WavMover() { close(); }
 	bool play(File file); //!< prepare to play a file that's already open
 	
@@ -92,10 +100,10 @@ public:
 				
 		}
 		
-	int8_t* getBuffer() //!< return pointer to buffer holding WAV data
+	inline int8_t* getBuffer() //!< return pointer to buffer holding WAV data
 		{ return buffer; }
 		
-	size_t getBufferSize() //!< return size of buffer
+	inline size_t getBufferSize() //!< return size of buffer
 		{ return sz_mem; }
 		
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
@@ -103,12 +111,15 @@ public:
 			sz_mem = len; 
 			buffer = (int8_t*) malloc(sz_mem); 
 			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-			for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
+			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
 		}
 		
-	size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
+	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
 		{ 
+            #if defined (DEBUG_PIN_PLAYWAV) 
+                digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
+            #endif
 			uint32_t tmp = ARM_DWT_CYCCNT;
 			size_t result = wavfile.read(buf,len);
 			
@@ -118,14 +129,16 @@ public:
 			
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastReadLoad = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-			
+            #if defined (DEBUG_PIN_PLAYWAV) 
+                digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
+            #endif			
 			return result;
 		}
 		
-	void seek(size_t pos) //!< seek to new file position
+	inline void seek(size_t pos) //!< seek to new file position
 		{ wavfile.seek(pos); }
 		
-	size_t position() //!< return file position
+	inline size_t position() //!< return file position
 		{ return wavfile.position(); }
 		
 	void close() //!< close file, free up the buffer, detach responder
@@ -198,6 +211,9 @@ public:
 	bool play(File file, bool paused);
 	bool play(const char *filename);
 	bool play(const char *filename, bool paused); // optional start in paused state
+    // Todo:
+    // - playRaw
+    // - playAiff (?) 
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void);
 	void pause(bool pause);
@@ -212,7 +228,7 @@ public:
 	uint32_t numChannels(void);
 	uint32_t sampleRate(void);
 	uint32_t channelMask(void);
-	uint8_t lastErr(void);              // returns last error
+	uint8_t lastErr(void);
 	size_t memUsed(void);
 	size_t memRead(void);
 	uint8_t instanceID(void);
@@ -233,15 +249,14 @@ private:
     void startInt(bool enabled);
     void (*decoder)(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels);
 	WavMover wavMovr;
-	//File wavfile;
-	//int8_t *buffer = nullptr;	        // buffer data
-	//size_t sz_mem = 0;				// Size of allocated memory
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	size_t total_length = 0;			// number of audio data bytes in file
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
 	uint32_t channelmask = 0;           // dwChannelMask
+    uint8_t fileFmt = 0;                // file format (0 = *.wav, more to come)
+    uint8_t dataFmt = 0;                // data format (0 = std, 1 = ulaw)
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state;					    // play status (stop, pause, playing)
