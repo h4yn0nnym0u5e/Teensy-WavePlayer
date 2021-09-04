@@ -68,7 +68,7 @@ bool WavMover::play(File file)
 {
 	wavfile = file;
 	evResp.attach(evFunc);
-	
+
 	return true;
 }
 //----------------------------------------------------------------------------------------------------
@@ -85,6 +85,24 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
         unsigned int chan = 0;
         do {
             queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+
+// 8 bit signed:
+__attribute__((hot))
+void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = *p++;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
 
@@ -288,7 +306,7 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_FILE;
     if (!wavMovr) return false;
-	
+
 
     irq = stopInt();
     rd = wavMovr.read(&fileHeader, sizeof(fileHeader));
@@ -366,18 +384,20 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_OK;
 
     wavMovr.setPadding(0);
-    
+
     switch(bytes) {
         case 1: switch (dataFmt) {
-                    
+
                     case 0: decoder = &decode_8bit;
                             wavMovr.setPadding(128);
-                    break;
-                    
-                    case 1: decoder = &decode_8bit_ulaw;
-                    break;
+                            break;
+                    case 1: decode_8bit_signed;
+                            break;
+                    case 2: decoder = &decode_8bit_ulaw;
+                            break;
                 }
-        case 2: decoder =  &decode_16bit;                
+
+        case 2: decoder =  &decode_16bit;
                 break;
     }
 
@@ -389,10 +409,10 @@ bool AudioPlayWav::readHeader(int newState)
 
 		// Simplified calculation of how much buffer to pre-load, from all down
 		// to 1/Nth depending on the instance number. This sort of works, but
-		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the 
+		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the
 		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
 		// are deleted (which will happen with dynamic audio objects), and (c) doesn't
-		// take into account any recording objects which need SD card bandwidth and 
+		// take into account any recording objects which need SD card bandwidth and
 		// would also need interleaving. Proper base class needed?
 		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
         wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
@@ -415,7 +435,7 @@ void  AudioPlayWav::update(void)
     unsigned int chan;
 	int8_t* currentPos = wavMovr.getBuffer(); // buffer pointer: don't cache, could change in the future
 	size_t sz_mem = wavMovr.getBufferSize();
-	
+
 	if (nullptr == currentPos)
 		return;
 
@@ -449,13 +469,13 @@ void  AudioPlayWav::update(void)
     //Serial.printf("%d\n",data_length);
     --data_length;
 	if (data_length <= 0) stop();
-	
+
 	// trigger buffer fill if we just emptied it
     if ( buffer_rd == 0)
     {
         wavMovr.readLater();
     }
-	
+
 }
 
 bool AudioPlayWav::stopInt()
@@ -638,9 +658,9 @@ File AudioPlayWav::file(void)
 uint32_t AudioPlayWav::filePos(void)
 {
 	uint32_t result = 123456L;
-	
+
 	if (wavMovr)
 		result = wavMovr.position();
-	
+
 	return result;
 }

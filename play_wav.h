@@ -1,13 +1,13 @@
-/* 
-   Wavefile player 
+/*
+   Wavefile player
    Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
-   
-   for 
-   
+
+   for
+
    Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
-   
+
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -56,10 +56,10 @@
 #define SPTF(...) Serial.printf(__VA_ARGS__)
 #define SFSH(...) Serial.flush()
 #else
-#define SPLN(...) 
-#define SPRT(...) 
-#define SPTF(...) 
-#define SFSH(...) 
+#define SPLN(...)
+#define SPRT(...)
+#define SPTF(...)
+#define SFSH(...)
 #endif  // defined(DEBUG_PRINT_PLAYWAV)
 
 //#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
@@ -83,93 +83,93 @@ class WavMover
 public:
 	WavMover() : buffer{nullptr} {
         SPTF("Constructing WavMover at %X\r\n",this);
-        #if defined (DEBUG_PIN_PLAYWAV) 
+        #if defined (DEBUG_PIN_PLAYWAV)
             pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
-        #endif        
+        #endif
     }
 	~WavMover() { close(); }
 	bool play(File file); //!< prepare to play a file that's already open
-	
+
 	// Simple functions we can define immediately:
 	void readLater(void) //!< from interrupt: request re-fill the buffer
-		{ 
+		{
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
 			else
 				read(buffer,sz_mem);		 // read immediately
-				
+
 		}
-		
+
 	inline int8_t* getBuffer() //!< return pointer to buffer holding WAV data
 		{ return buffer; }
-		
+
 	inline size_t getBufferSize() //!< return size of buffer
 		{ return sz_mem; }
-		
+
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
-		{ 
-			sz_mem = len; 
-			buffer = (int8_t*) malloc(sz_mem); 
+		{
+			sz_mem = len;
+			buffer = (int8_t*) malloc(sz_mem);
 			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
 		}
-		
+
 	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
-		{ 
-            #if defined (DEBUG_PIN_PLAYWAV) 
+		{
+            #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
             #endif
 			uint32_t tmp = ARM_DWT_CYCCNT;
 			size_t result = wavfile.read(buf,len);
-			
-			if ( result < len ) 
-				memset((int8_t*) buf+result, padding , len - result);				
+
+			if ( result < len )
+				memset((int8_t*) buf+result, padding , len - result);
 			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-			
+
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastReadLoad = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-            #if defined (DEBUG_PIN_PLAYWAV) 
+            #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
-            #endif			
+            #endif
 			return result;
 		}
-		
+
 	inline void seek(size_t pos) //!< seek to new file position
 		{ wavfile.seek(pos); }
-		
+
 	inline size_t position() //!< return file position
 		{ return wavfile.position(); }
-		
+
 	void close() //!< close file, free up the buffer, detach responder
-		{ 
+		{
 			bool irq = stopInt();
-			
-			if (wavfile)  
-				wavfile.close();  
-			
-			if (nullptr != buffer) 
-			{ 
+
+			if (wavfile)
+				wavfile.close();
+
+			if (nullptr != buffer)
+			{
 				SPTF("\r\Freed %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-				free(buffer); 
-				buffer = nullptr; 
+				free(buffer);
+				buffer = nullptr;
 			}
-			
-			//evResp.detach();	
+
+			//evResp.detach();
 			evResp.clearEvent(); // not intuitive, but works SO much better...
-			
+
 			startInt(irq);
 		}
-		
+
 	void setPadding(uint8_t b) { padding = b; }
-	
+
 	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
-	
+
 	operator bool() {return wavfile;}
-	
+
 	uint32_t lastReadLoad;		//!< CPU load for last SD card read, spread over the number of audio blocks loaded
 	File wavfile;				//!< file if streaming to/from SD card
-	
+
 private:
 	bool stopInt()
 	{
@@ -185,18 +185,18 @@ private:
 	{
     if (enabled)
         NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
-	}	
-	
+	}
+
 	static void evFunc(EventResponderRef ref) //!< foreground: respond to request to load WAV data
 	{
 		WavMover& thisWM = *(WavMover*) ref.getData();
-		
+
 		SPRT("*** ");
 		thisWM.read(thisWM.buffer,thisWM.sz_mem);
 	}
 	EventResponder evResp; 			//!< executes data transfer in foreground
 	int8_t* buffer;					//!< buffer to store pre-loaded WAV data
-	size_t sz_mem;					//!< size of buffer	
+	size_t sz_mem;					//!< size of buffer
 	uint8_t padding;				//!< value to pad buffer at EOF
 	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
 };
@@ -213,7 +213,7 @@ public:
 	bool play(const char *filename, bool paused); // optional start in paused state
     // Todo:
     // - playRaw
-    // - playAiff (?) 
+    // - playAiff (?)
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void);
 	void pause(bool pause);
@@ -235,10 +235,10 @@ public:
 	File file(void);
 	virtual void update(void);
 	static void enableEventReading(bool enable) { WavMover::enableEventReading(enable); }
-	float getCPUload() 
+	float getCPUload()
 	{ 	// correct for bytes/sample and number of channels in file
-		return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad * bytes * channels); 
-	}  
+		return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad * bytes * channels);
+	}
 private:
     void begin(void);
 	void end(void);
@@ -256,7 +256,7 @@ private:
 	unsigned int channels = 0;			// #of channels in the wave file
 	uint32_t channelmask = 0;           // dwChannelMask
     uint8_t fileFmt = 0;                // file format (0 = *.wav, more to come)
-    uint8_t dataFmt = 0;                // data format (0 = std, 1 = ulaw)
+    uint8_t dataFmt = 0;                // data format (0 = std, 1 = 8 bit signed, 2 = ulaw)
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state;					    // play status (stop, pause, playing)
