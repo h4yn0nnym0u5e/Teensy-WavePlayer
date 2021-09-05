@@ -47,7 +47,12 @@
 #define APW_ERR_FORMAT          1 // not supported Format
 #define APW_ERR_FILE   			2 // File not readable (does it exist?)
 #define APW_ERR_OUT_OF_MEMORY   3 // Not enough dynamic memory available
-#define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audo blocks
+#define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audio blocks
+
+#define APW_STATE_STOP    0
+#define APW_STATE_PAUSED  1
+#define APW_STATE_PLAY    2
+#define APW_STATE_RECORD  APW_STATE_PLAY
 
 #define xDEBUG_PRINT_PLAYWAV
 #if defined(DEBUG_PRINT_PLAYWAV)
@@ -62,13 +67,16 @@
 #define SFSH(...) 
 #endif  // defined(DEBUG_PRINT_PLAYWAV)
 
+//#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
+
+
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
 #else
 	const int _AudioPlayWav_MaxChannels = 16;
 #endif
 
-class AudioPlayWav;
+
 
 /**
  * Class to move WAV data from (and eventually to?) files using
@@ -78,7 +86,12 @@ class AudioPlayWav;
 class WavMover
 {
 public:
-	WavMover() : buffer{nullptr} {SPTF("Constructing WavMover at %X\r\n",this);}
+	WavMover() : buffer{nullptr} {
+        SPTF("Constructing WavMover at %X\r\n",this);
+        #if defined (DEBUG_PIN_PLAYWAV)
+            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
+        #endif
+    }
 	~WavMover() { close(); }
 	bool play(File file); //!< prepare to play a file that's already open
 	
@@ -92,10 +105,10 @@ public:
 				
 		}
 		
-	int8_t* getBuffer() //!< return pointer to buffer holding WAV data
+	inline int8_t* getBuffer() //!< return pointer to buffer holding WAV data
 		{ return buffer; }
 		
-	size_t getBufferSize() //!< return size of buffer
+	inline size_t getBufferSize() //!< return size of buffer
 		{ return sz_mem; }
 		
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
@@ -103,12 +116,15 @@ public:
 			sz_mem = len; 
 			buffer = (int8_t*) malloc(sz_mem); 
 			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-			for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
+			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
 		}
 		
-	size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
+	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
 		{ 
+            #if defined (DEBUG_PIN_PLAYWAV)
+                digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
+            #endif
 			uint32_t tmp = ARM_DWT_CYCCNT;
 			size_t result = wavfile.read(buf,len);
 			
@@ -118,14 +134,16 @@ public:
 			
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastReadLoad = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-			
+            #if defined (DEBUG_PIN_PLAYWAV)
+                digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
+            #endif
 			return result;
 		}
 		
-	void seek(size_t pos) //!< seek to new file position
+	inline void seek(size_t pos) //!< seek to new file position
 		{ wavfile.seek(pos); }
 		
-	size_t position() //!< return file position
+	inline size_t position() //!< return file position
 		{ return wavfile.position(); }
 		
 	void close() //!< close file, free up the buffer, detach responder
@@ -188,35 +206,63 @@ private:
 	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
 };
 
+class AudioBaseWav
+{
+public:
+    AudioBaseWav(void){}
+    ~AudioBaseWav(void){}
+	void pause(bool pause);
+	bool isPaused(void) {return (state == APW_STATE_PAUSED);};
+	bool isStopped(void) {return (state == APW_STATE_STOP);};
 
-class AudioPlayWav : public AudioStream
+    uint8_t lastErr(void) {return last_err;};
+	size_t memUsed(void) {return wavMovr.getBufferSize();};
+	uint32_t filePos(void);
+	uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
+	uint32_t numBits(void) {return bytes * 8;}
+	uint32_t numChannels(void) {return channels;};
+	uint32_t sampleRate(void) {return sample_rate;};
+    uint8_t instanceID(void) {return my_instance;};
+    File file(void) {return wavMovr.wavfile;};
+    float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(wavMovr.lastReadLoad * bytes * channels);}
+protected:
+    WavMover wavMovr;
+    bool isRunning(void);
+    void togglePause(void);
+	void startUsingSPI(void);
+	void stopUsingSPI(void);
+    bool stopInt(void);
+    void startInt(bool enabled);
+	unsigned int sample_rate = 0;
+	unsigned int channels = 0;			// #of channels in the wave file
+    size_t total_length = 0;			// number of audio data bytes in file
+    uint8_t fileFmt = 0;                // file format (0 = *.wav, more to come)
+    uint8_t dataFmt = 0;                // data format (0 = std, 1 = 8 bit signed, 2 = ulaw)
+	uint8_t my_instance;                // instance id
+	uint8_t bytes = 0;  				// 1 or 2 bytes?
+	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
+    uint8_t last_err = APW_ERR_OK;
+private:
+};
+
+class AudioPlayWav : AudioBaseWav, public AudioStream
 {
 public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
 	~AudioPlayWav(void) { end(); } // no need to free audio blocks, never permanently allocates any
+    void stop(void);
 	bool play(File file);
 	bool play(File file, bool paused);
 	bool play(const char *filename);
 	bool play(const char *filename, bool paused); // optional start in paused state
+    // Todo:
+    // - playRaw
+    // - playAiff (?)
 	static bool addMemoryForRead(size_t mult); // add memory
-	void togglePlayPause(void);
-	void pause(bool pause);
-	void stop(void);
-	bool isPlaying(void);
-	bool isPaused(void);
-	bool isStopped(void);
+	void togglePlayPause(void) {togglePause();};
+    bool isPlaying(void) {return isRunning();};
 	uint32_t positionMillis(void);
-	uint32_t filePos(void);
-	uint32_t lengthMillis(void);
-	uint32_t numBits(void);
-	uint32_t numChannels(void);
-	uint32_t sampleRate(void);
-	uint32_t channelMask(void);
-	uint8_t lastErr(void);              // returns last error
-	size_t memUsed(void);
-	size_t memRead(void);
-	uint8_t instanceID(void);
-	File file(void);
+	uint32_t channelMask(void) {return channelmask;};
 	virtual void update(void);
 	static void enableEventReading(bool enable) { WavMover::enableEventReading(enable); }
 	float getCPUload() 
@@ -227,24 +273,14 @@ private:
     void begin(void);
 	void end(void);
 	bool readHeader(int newState);
-	void startUsingSPI(void);
-	void stopUsingSPI(void);
-    bool stopInt(void);
-    void startInt(bool enabled);
     void (*decoder)(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels);
-	WavMover wavMovr;
-	//File wavfile;
-	//int8_t *buffer = nullptr;	        // buffer data
-	//size_t sz_mem = 0;				// Size of allocated memory
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
-	size_t total_length = 0;			// number of audio data bytes in file
-	unsigned int sample_rate = 0;
-	unsigned int channels = 0;			// #of channels in the wave file
 	uint32_t channelmask = 0;           // dwChannelMask
-	uint8_t my_instance;                // instance id
-	uint8_t bytes = 0;  				// 1 or 2 bytes?
-	uint8_t state;					    // play status (stop, pause, playing)
-	uint8_t last_err = APW_ERR_OK;
 };
 
+#if 0 && defined(KINETISL)
+class AudioRecordWav : protected AudioBaseWav, public AudioStream
+{
+};
+#endif
