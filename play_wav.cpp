@@ -109,8 +109,8 @@ uint32_t AudioBaseWav::filePos(void)
 {
 	uint32_t result = 123456L;
 
-	if (wavMovr)
-		result = wavMovr.position();
+	if (/* wavMovr */ wavfile)
+		result = /* wavMovr. */ wavfile.position();
 
 	return result;
 }
@@ -140,17 +140,29 @@ void AudioBaseWav::stopUsingSPI(void)
 }
 
 //----------------------------------------------------------------------------------------------------
-bool WavMover::eventReadingEnabled = false; //!< true to read in EventResponder, otherwise reads happen under interrupt
+bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem in EventResponder, otherwise accesses happen under interrupt
 /*
- * Initialise utility to move data from SD card to memory (or vice versa in the future?).
+ * Initialise ready to move data from SD card to memory
  */
-bool WavMover::play(File file)
+bool AudioBaseWav::initRead(File file)
 {
 	wavfile = file;
-	evResp.attach(evFunc);
+	evResp.attach(evFuncRead);
 
 	return true;
 }
+
+/*
+ * Initialise ready to move data from memory to SD card
+ */
+bool AudioBaseWav::initWrite(File file)
+{
+	wavfile = file;
+	evResp.attach(evFuncWrite);
+
+	return true;
+}
+
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -255,7 +267,7 @@ bool AudioPlayWav::play(File file, const bool paused)
 {
     stop();
 
-    wavMovr.play(file);
+    initRead(file);
     startUsingSPI();
 
     if (!readHeader( paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
@@ -279,7 +291,7 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
-	wavMovr.play(file);
+	initRead(file);
 
     if (!readHeader(paused ? APW_STATE_PAUSED : APW_STATE_PLAY))
     {
@@ -295,7 +307,7 @@ void AudioPlayWav::stop(void)
     state = APW_STATE_STOP;
 	SPLN("\r\nSTOP!");
     bool irq = stopInt();
-    wavMovr.close();
+    /* wavMovr. */ close();
     startInt(irq);
 
     stopUsingSPI();
@@ -385,11 +397,11 @@ bool AudioPlayWav::readHeader(int newState)
     channelmask = sample_rate = channels = bytes = 0;
 
     last_err = APW_ERR_FILE;
-    if (!wavMovr) return false;
+    if (!wavfile /* wavMovr */) return false;
 
 
     irq = stopInt();
-    rd = wavMovr.read(&fileHeader, sizeof(fileHeader));
+    rd = /* wavMovr. */ read(&fileHeader, sizeof(fileHeader));
     startInt(irq);
     if (rd < sizeof(fileHeader)) return false;
 
@@ -401,8 +413,8 @@ bool AudioPlayWav::readHeader(int newState)
 
     do {
         irq = stopInt();
-        wavMovr.seek(position);
-        rd = wavMovr.read(&dataHeader, sizeof(dataHeader));
+        /* wavMovr */ wavfile.seek(position);
+        rd = /* wavMovr.*/ read(&dataHeader, sizeof(dataHeader));
         startInt(irq);
 
         if (rd < sizeof(dataHeader)) return false;
@@ -414,17 +426,17 @@ bool AudioPlayWav::readHeader(int newState)
             //Serial.println(dataHeader.chunkSize);
             irq = stopInt();
             if (dataHeader.chunkSize < 16) {
-                wavMovr.read(&fmtHeader, sizeof(tFmtHeader));
+                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeader));
                 bytes = 1;
             } else if (dataHeader.chunkSize == 16) {
-                wavMovr.read(&fmtHeader, sizeof(tFmtHeaderEx));
+                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
             } else {
                 tFmtHeaderExtensible fmtHeaderExtensible;
-                wavMovr.read(&fmtHeader, sizeof(tFmtHeaderEx));
+                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
                 memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
-                wavMovr.read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
+                /* wavMovr. */ read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
                 channelmask = fmtHeaderExtensible.dwChannelMask;
                 //Serial.printf("channel mask: 0x%x\n", channelmask);
             }
@@ -454,7 +466,7 @@ bool AudioPlayWav::readHeader(int newState)
     sz_mem *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  wavMovr.createBuffer( sz_mem );
+    int8_t* buffer =  /* wavMovr. */ createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = APW_ERR_OUT_OF_MEMORY;
@@ -463,14 +475,14 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
-    wavMovr.setPadding(0);
+    /* wavMovr. */ setPadding(0);
     dataFmt = 0; //todo;
 
     switch(bytes) {
         case 1: switch (dataFmt) {
 
                     case 0: decoder = &decode_8bit;
-                            wavMovr.setPadding(128);
+                            /* wavMovr. */ setPadding(128);
                             break;
                     case 1: decoder = &decode_8bit_signed;
                             break;
@@ -496,7 +508,7 @@ bool AudioPlayWav::readHeader(int newState)
 		// take into account any recording objects which need SD card bandwidth and
 		// would also need interleaving. Proper base class needed?
 		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
-        wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
+        /* wavMovr. */ read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
         startInt(irq);
 
@@ -514,8 +526,8 @@ void  AudioPlayWav::update(void)
     if ( state != APW_STATE_PLAY ) return;
 
     unsigned int chan;
-	int8_t* currentPos = wavMovr.getBuffer(); // buffer pointer: don't cache, could change in the future
-	size_t sz_mem = wavMovr.getBufferSize();
+	int8_t* currentPos = /* wavMovr. */ getBuffer(); // buffer pointer: don't cache, could change in the future
+	size_t sz_mem = /* wavMovr. */ getBufferSize();
 
 	if (nullptr == currentPos)
 		return;
@@ -554,7 +566,7 @@ void  AudioPlayWav::update(void)
 	// trigger buffer fill if we just emptied it
     if ( buffer_rd == 0)
     {
-        wavMovr.readLater();
+        /* wavMovr. */ readLater();
     }
 
 }
