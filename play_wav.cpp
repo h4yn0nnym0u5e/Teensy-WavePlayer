@@ -38,13 +38,10 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
-//extern "C" {
-//extern const int16_t ulaw_decode_table[256];
-//};
+extern "C" {
+    extern const int16_t ulaw_decode_table[256];
+};
 
-#define STATE_STOP    0
-#define STATE_PAUSED  1
-#define STATE_PLAY    2
 
 //#define HANDLE_SPI    1 //TODO...
 
@@ -56,8 +53,91 @@ static const uint8_t _sz_mem_additional = 1;
 #endif
 #else
 static uint8_t _AudioPlayWavInstances = 0;
+static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
 #endif
+
+//----------------------------------------------------------------------------------------------------
+bool AudioBaseWav::stopInt()
+{
+    if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
+    {
+        NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
+        return true;
+    }
+    return false;
+}
+
+void AudioBaseWav::startInt(bool enabled)
+{
+    if (enabled)
+        NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
+}
+
+bool AudioBaseWav::isRunning(void)
+{
+    yield();
+    bool irq = stopInt();
+    uint8_t s = state == APW_STATE_PLAY;
+    startInt(irq);
+    return s;
+}
+
+void AudioBaseWav::pause(const bool pause)
+{
+    if (state == APW_STATE_STOP) return;
+    bool irq = stopInt();
+    if (pause)
+    {
+        state = APW_STATE_PAUSED;
+        stopUsingSPI();
+    } else {
+        startUsingSPI();
+        state = APW_STATE_PLAY;
+    }
+    startInt(irq);
+}
+
+void AudioBaseWav::togglePause(void)
+{
+    bool irq = stopInt();
+    pause(state == APW_STATE_PLAY);
+    startInt(irq);
+}
+
+uint32_t AudioBaseWav::filePos(void)
+{
+	uint32_t result = 123456L;
+
+	if (wavMovr)
+		result = wavMovr.position();
+
+	return result;
+}
+
+void AudioBaseWav::startUsingSPI(void)
+{
+//TODO... https://forum.pjrc.com/threads/67989-Teensyduino-1-55-Beta-1?p=287023&viewfull=1#post287023
+//this must be smarter.
+#if defined(HANDLE_SPI)
+#if defined(HAS_KINETIS_SDHC)
+   if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
+#else
+    AudioStartUsingSPI();
+#endif
+#endif
+}
+
+void AudioBaseWav::stopUsingSPI(void)
+{ //TODO...
+#if defined(HANDLE_SPI)
+#if defined(HAS_KINETIS_SDHC)
+    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
+#else
+    AudioStopUsingSPI();
+#endif
+#endif
+}
 
 //----------------------------------------------------------------------------------------------------
 bool WavMover::eventReadingEnabled = false; //!< true to read in EventResponder, otherwise reads happen under interrupt
@@ -68,11 +148,12 @@ bool WavMover::play(File file)
 {
 	wavfile = file;
 	evResp.attach(evFunc);
-	
+
 	return true;
 }
 //----------------------------------------------------------------------------------------------------
 
+// 8 bit unsigned:
 __attribute__((hot))
 void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
@@ -90,6 +171,41 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
 }
 
 
+// 8 bit signed:
+__attribute__((hot))
+void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = *p++;
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+// 8 bit ulaw:
+__attribute__((hot))
+void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+    int8_t *p = &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = ulaw_decode_table[*p++];
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
+// 16 bit:
 __attribute__((hot))
 void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
@@ -106,11 +222,16 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 
 }
 
+// Todo:
+//- upsampling (CMSIS?)
+//- downsampling (CMSIS?) (is that really needed? pretty inefficient to load way more data than necccessary and downsample then..
+//- play float formats?
 
+//----------------------------------------------------------------------------------------------------
 FLASHMEM
 void AudioPlayWav::begin(void)
 {
-    state = STATE_STOP;
+    state = APW_STATE_STOP;
 #if !defined(KINETISL)
     my_instance = _AudioPlayWavInstances;
     ++_AudioPlayWavInstances;
@@ -137,7 +258,7 @@ bool AudioPlayWav::play(File file, const bool paused)
     wavMovr.play(file);
     startUsingSPI();
 
-    if (!readHeader( paused ? STATE_PAUSED : STATE_PLAY ))
+    if (!readHeader( paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -160,7 +281,7 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     startInt(irq);
 	wavMovr.play(file);
 
-    if (!readHeader(paused ? STATE_PAUSED : STATE_PLAY))
+    if (!readHeader(paused ? APW_STATE_PAUSED : APW_STATE_PLAY))
     {
         stop();
         return false;
@@ -171,7 +292,7 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
 void AudioPlayWav::stop(void)
 {
 
-    state = STATE_STOP;
+    state = APW_STATE_STOP;
 	SPLN("\r\nSTOP!");
     bool irq = stopInt();
     wavMovr.close();
@@ -265,7 +386,7 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_FILE;
     if (!wavMovr) return false;
-	
+
 
     irq = stopInt();
     rd = wavMovr.read(&fileHeader, sizeof(fileHeader));
@@ -342,12 +463,26 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
-    if (bytes == 1) decoder = &decode_8bit;
-    else
-    if (bytes == 2) decoder = &decode_16bit;
+    wavMovr.setPadding(0);
+    dataFmt = 0; //todo;
+
+    switch(bytes) {
+        case 1: switch (dataFmt) {
+
+                    case 0: decoder = &decode_8bit;
+                            wavMovr.setPadding(128);
+                            break;
+                    case 1: decoder = &decode_8bit_signed;
+                            break;
+                    case 2: decoder = &decode_8bit_ulaw;
+                            break;
+                }
+
+        case 2: decoder =  &decode_16bit;
+                break;
+    }
 
 #if !defined(KINETISL)
-	wavMovr.setPadding((bytes == 1) ? 128:0);
     if (_AudioPlayWavInstances > 1) {
         //For sync start, and to start immediately:
 
@@ -355,10 +490,10 @@ bool AudioPlayWav::readHeader(int newState)
 
 		// Simplified calculation of how much buffer to pre-load, from all down
 		// to 1/Nth depending on the instance number. This sort of works, but
-		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the 
+		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the
 		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
 		// are deleted (which will happen with dynamic audio objects), and (c) doesn't
-		// take into account any recording objects which need SD card bandwidth and 
+		// take into account any recording objects which need SD card bandwidth and
 		// would also need interleaving. Proper base class needed?
 		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
         wavMovr.read(&buffer[buffer_rd], sz_mem - buffer_rd);
@@ -376,12 +511,12 @@ bool AudioPlayWav::readHeader(int newState)
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-    if ( state != STATE_PLAY ) return;
+    if ( state != APW_STATE_PLAY ) return;
 
     unsigned int chan;
 	int8_t* currentPos = wavMovr.getBuffer(); // buffer pointer: don't cache, could change in the future
 	size_t sz_mem = wavMovr.getBufferSize();
-	
+
 	if (nullptr == currentPos)
 		return;
 
@@ -415,53 +550,13 @@ void  AudioPlayWav::update(void)
     //Serial.printf("%d\n",data_length);
     --data_length;
 	if (data_length <= 0) stop();
-	
+
 	// trigger buffer fill if we just emptied it
     if ( buffer_rd == 0)
     {
         wavMovr.readLater();
     }
-	
-}
 
-bool AudioPlayWav::stopInt()
-{
-    if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
-    {
-        NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
-        return true;
-    }
-    return false;
-}
-
-void AudioPlayWav::startInt(bool enabled)
-{
-    if (enabled)
-        NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
-}
-
-void AudioPlayWav::startUsingSPI(void)
-{
-//TODO... https://forum.pjrc.com/threads/67989-Teensyduino-1-55-Beta-1?p=287023&viewfull=1#post287023
-//this must be smarter.
-#if defined(HANDLE_SPI)
-#if defined(HAS_KINETIS_SDHC)
-   if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
-#else
-    AudioStartUsingSPI();
-#endif
-#endif
-}
-
-void AudioPlayWav::stopUsingSPI(void)
-{ //TODO...
-#if defined(HANDLE_SPI)
-#if defined(HAS_KINETIS_SDHC)
-    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
-#else
-    AudioStopUsingSPI();
-#endif
-#endif
 }
 
 bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
@@ -473,41 +568,6 @@ bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
 	return true;
 }
 
-bool AudioPlayWav::isPlaying(void)
-{
-    return state == STATE_PLAY;
-}
-
-void AudioPlayWav::togglePlayPause(void)
-{
-    pause(state == STATE_PLAY);
-}
-
-void AudioPlayWav::pause(const bool pause)
-{
-    if (state == STATE_STOP) return;
-    bool irq = stopInt();
-    if (pause)
-    {
-        state = STATE_PAUSED;
-        stopUsingSPI();
-    } else {
-        startUsingSPI();
-        state = STATE_PLAY;
-    }
-    startInt(irq);
-}
-
-bool AudioPlayWav::isPaused(void)
-{
-    return (state == STATE_PAUSED);
-}
-
-
-bool AudioPlayWav::isStopped(void)
-{
-    return (state == STATE_STOP);
-}
 
 #define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
 
@@ -550,63 +610,3 @@ uint32_t AudioPlayWav::positionMillis(void)
     return ret;
 }
 #endif
-
-uint32_t AudioPlayWav::lengthMillis(void)
-{
-    return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);
-}
-
-uint32_t AudioPlayWav::numBits(void)
-{
-    return bytes * 8;
-};
-
-uint32_t AudioPlayWav::numChannels(void)
-{
-    return channels;
-}
-
-uint32_t AudioPlayWav::sampleRate(void)
-{
-    return sample_rate;
-}
-
-uint32_t AudioPlayWav::channelMask(void)
-{
-	return channelmask;
-}
-
-uint8_t AudioPlayWav::lastErr(void)
-{
-	return last_err;
-}
-
-size_t AudioPlayWav::memUsed(void)
-{
-	return wavMovr.getBufferSize();
-}
-
-size_t AudioPlayWav::memRead(void)
-{
-	return buffer_rd;
-}
-
-uint8_t AudioPlayWav::instanceID(void)
-{
-	return my_instance;
-}
-
-File AudioPlayWav::file(void)
-{
-    return wavMovr.wavfile;
-}
-
-uint32_t AudioPlayWav::filePos(void)
-{
-	uint32_t result = 123456L;
-	
-	if (wavMovr)
-		result = wavMovr.position();
-	
-	return result;
-}
