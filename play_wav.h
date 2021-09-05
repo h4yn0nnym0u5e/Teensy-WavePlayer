@@ -245,7 +245,7 @@ protected:
 private:
 };
 
-class AudioPlayWav : AudioBaseWav, public AudioStream
+class AudioPlayWav : public AudioBaseWav, public AudioStream
 {
 public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
