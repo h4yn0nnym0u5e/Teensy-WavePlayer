@@ -50,12 +50,12 @@ static const uint8_t _AudioPlayWavInstances = 1;
 static const uint8_t _sz_mem_additional = 1;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
-#endif
+#endif // AUDIO_BLOCK_SAMPLES < 128
 #else
 static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
-#endif
+#endif // defined(KINETISL)
 
 //----------------------------------------------------------------------------------------------------
 bool AudioBaseWav::stopInt()
@@ -109,8 +109,8 @@ uint32_t AudioBaseWav::filePos(void)
 {
 	uint32_t result = 123456L;
 
-	if (/* wavMovr */ wavfile)
-		result = /* wavMovr. */ wavfile.position();
+	if (wavfile)
+		result = wavfile.position();
 
 	return result;
 }
@@ -124,8 +124,8 @@ void AudioBaseWav::startUsingSPI(void)
    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
 #else
     AudioStartUsingSPI();
-#endif
-#endif
+#endif // defined(HAS_KINETIS_SDHC)
+#endif //defined(HANDLE_SPI)
 }
 
 void AudioBaseWav::stopUsingSPI(void)
@@ -135,8 +135,8 @@ void AudioBaseWav::stopUsingSPI(void)
     if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
 #else
     AudioStopUsingSPI();
-#endif
-#endif
+#endif // defined(HAS_KINETIS_SDHC)
+#endif //defined(HANDLE_SPI)
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -236,7 +236,8 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 
 // Todo:
 //- upsampling (CMSIS?)
-//- downsampling (CMSIS?) (is that really needed? pretty inefficient to load way more data than necccessary and downsample then..
+//- downsampling (CMSIS?) (is that really needed? pretty inefficient to load way more data than necessary and downsample then..
+//- ...but may be useful for sample rate conversion or playback speed variation
 //- play float formats?
 
 //----------------------------------------------------------------------------------------------------
@@ -247,21 +248,25 @@ void AudioPlayWav::begin(void)
 #if !defined(KINETISL)
     my_instance = _AudioPlayWavInstances;
     ++_AudioPlayWavInstances;
-#endif
+#endif // !defined(KINETISL)
 }
 
+
+FLASHMEM
 void AudioPlayWav::end(void)
 {
 	stop();
 #if !defined(KINETISL)
     --_AudioPlayWavInstances;
-#endif
+#endif // !defined(KINETISL)
 }
+
 
 bool AudioPlayWav::play(File file)
 {
     return play(file, false);
 }
+
 
 bool AudioPlayWav::play(File file, const bool paused)
 {
@@ -278,10 +283,12 @@ bool AudioPlayWav::play(File file, const bool paused)
     return true;
 }
 
+
 bool AudioPlayWav::play(const char *filename)
 {
     return play(filename, false);
 }
+
 
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
@@ -301,13 +308,14 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     return true;
 }
 
+
 void AudioPlayWav::stop(void)
 {
 
     state = APW_STATE_STOP;
 	SPLN("\r\nSTOP!");
     bool irq = stopInt();
-    /* wavMovr. */ close();
+    close();
     startInt(irq);
 
     stopUsingSPI();
@@ -387,7 +395,6 @@ typedef struct {
 
 bool AudioPlayWav::readHeader(int newState)
 {
-
     size_t sz_frame, position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
@@ -397,11 +404,11 @@ bool AudioPlayWav::readHeader(int newState)
     channelmask = sample_rate = channels = bytes = 0;
 
     last_err = APW_ERR_FILE;
-    if (!wavfile /* wavMovr */) return false;
+    if (!wavfile) return false;
 
 
     irq = stopInt();
-    rd = /* wavMovr. */ read(&fileHeader, sizeof(fileHeader));
+    rd = read(&fileHeader, sizeof(fileHeader));
     startInt(irq);
     if (rd < sizeof(fileHeader)) return false;
 
@@ -413,8 +420,8 @@ bool AudioPlayWav::readHeader(int newState)
 
     do {
         irq = stopInt();
-        /* wavMovr */ wavfile.seek(position);
-        rd = /* wavMovr.*/ read(&dataHeader, sizeof(dataHeader));
+        wavfile.seek(position);
+        rd = read(&dataHeader, sizeof(dataHeader));
         startInt(irq);
 
         if (rd < sizeof(dataHeader)) return false;
@@ -426,17 +433,17 @@ bool AudioPlayWav::readHeader(int newState)
             //Serial.println(dataHeader.chunkSize);
             irq = stopInt();
             if (dataHeader.chunkSize < 16) {
-                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeader));
+                read(&fmtHeader, sizeof(tFmtHeader));
                 bytes = 1;
             } else if (dataHeader.chunkSize == 16) {
-                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeaderEx));
+                read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
             } else {
                 tFmtHeaderExtensible fmtHeaderExtensible;
-                /* wavMovr. */ read(&fmtHeader, sizeof(tFmtHeaderEx));
+                read(&fmtHeader, sizeof(tFmtHeaderEx));
                 bytes = fmtHeader.wBitsPerSample / 8;
                 memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
-                /* wavMovr. */ read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
+                read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
                 channelmask = fmtHeaderExtensible.dwChannelMask;
                 //Serial.printf("channel mask: 0x%x\n", channelmask);
             }
@@ -466,7 +473,7 @@ bool AudioPlayWav::readHeader(int newState)
     sz_mem *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  /* wavMovr. */ createBuffer( sz_mem );
+    int8_t* buffer =  createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = APW_ERR_OUT_OF_MEMORY;
@@ -475,14 +482,14 @@ bool AudioPlayWav::readHeader(int newState)
 
     last_err = APW_ERR_OK;
 
-    /* wavMovr. */ setPadding(0);
+    setPadding(0);
     dataFmt = 0; //todo;
 
     switch(bytes) {
         case 1: switch (dataFmt) {
 
                     case 0: decoder = &decode_8bit;
-                            /* wavMovr. */ setPadding(128);
+                            setPadding(128);
                             break;
                     case 1: decoder = &decode_8bit_signed;
                             break;
@@ -508,7 +515,7 @@ bool AudioPlayWav::readHeader(int newState)
 		// take into account any recording objects which need SD card bandwidth and
 		// would also need interleaving. Proper base class needed?
 		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
-        /* wavMovr. */ read(&buffer[buffer_rd], sz_mem - buffer_rd);
+        read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
         startInt(irq);
 
@@ -516,9 +523,10 @@ bool AudioPlayWav::readHeader(int newState)
         state = newState;
 #else
     state = newState; //this *must* be the last instruction.
-#endif
+#endif // !defined(KINETISL)
     return true;
 }
+
 
 __attribute__((hot))
 void  AudioPlayWav::update(void)
@@ -526,8 +534,8 @@ void  AudioPlayWav::update(void)
     if ( state != APW_STATE_PLAY ) return;
 
     unsigned int chan;
-	int8_t* currentPos = /* wavMovr. */ getBuffer(); // buffer pointer: don't cache, could change in the future
-	size_t sz_mem = /* wavMovr. */ getBufferSize();
+	int8_t* currentPos = getBuffer(); // buffer pointer: don't cache, could change in the future
+	size_t sz_mem = getBufferSize();
 
 	if (nullptr == currentPos)
 		return;
@@ -566,17 +574,18 @@ void  AudioPlayWav::update(void)
 	// trigger buffer fill if we just emptied it
     if ( buffer_rd == 0)
     {
-        /* wavMovr. */ readLater();
+        readLater();
     }
 
 }
+
 
 bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
 {
 #if !defined(KINETISL)
     if (mult < 1) mult = 1;
 	_sz_mem_additional = mult;
-#endif
+#endif // !defined(KINETISL)
 	return true;
 }
 
@@ -591,12 +600,14 @@ __attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint
    return(result);
 }
 
+
 __attribute__( ( always_inline ) ) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
 {
    uint32_t result;
    asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
    return(result);
 }
+
 
 uint32_t AudioPlayWav::positionMillis(void)
 {
@@ -611,6 +622,8 @@ uint32_t AudioPlayWav::positionMillis(void)
 
     return ret;
 }
+
+
 #else
 uint32_t AudioPlayWav::positionMillis(void)
 {
@@ -621,4 +634,4 @@ uint32_t AudioPlayWav::positionMillis(void)
     startInt(irq);
     return ret;
 }
-#endif
+#endif // !defined(KINETISL)

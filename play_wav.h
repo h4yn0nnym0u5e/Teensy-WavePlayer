@@ -78,137 +78,16 @@
 
 
 
-/**
- * Class to move WAV data from (and eventually to?) files using
- * EventResponder to decouple interrupt demand from foreground
- * data access. Of most use with SD cards.
- */
- /*
-class WavMover
-{
-public:
-	WavMover() : buffer{nullptr} {
-        SPTF("Constructing WavMover at %X\r\n",this);
-        #if defined (DEBUG_PIN_PLAYWAV)
-            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
-        #endif
-    }
-	~WavMover() { close(); }
-	bool play(File file); //!< prepare to play a file that's already open
-	
-	// Simple functions we can define immediately:
-	void readLater(void) //!< from interrupt: request re-fill the buffer
-		{ 
-			if (eventReadingEnabled)
-				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
-			else
-				read(buffer,sz_mem);		 // read immediately
-				
-		}
-		
-	inline int8_t* getBuffer() //!< return pointer to buffer holding WAV data
-		{ return buffer; }
-		
-	inline size_t getBufferSize() //!< return size of buffer
-		{ return sz_mem; }
-		
-	int8_t* createBuffer(size_t len) //!< allocate the buffer
-		{ 
-			sz_mem = len; 
-			buffer = (int8_t*) malloc(sz_mem); 
-			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
-			return buffer;
-		}
-		
-	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
-		{ 
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
-            #endif
-			uint32_t tmp = ARM_DWT_CYCCNT;
-			size_t result = wavfile.read(buf,len);
-			
-			if ( result < len ) 
-				memset((int8_t*) buf+result, padding , len - result);				
-			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-			
-			// % CPU load per track per update cycle: assumes 8-bit samples
-			lastReadLoad = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
-            #endif
-			return result;
-		}
-		
-	inline void seek(size_t pos) //!< seek to new file position
-		{ wavfile.seek(pos); }
-		
-	inline size_t position() //!< return file position
-		{ return wavfile.position(); }
-		
-	void close() //!< close file, free up the buffer, detach responder
-		{ 
-			bool irq = stopInt();
-			
-			if (wavfile)  
-				wavfile.close();  
-			
-			if (nullptr != buffer) 
-			{ 
-				SPTF("\r\Freed %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-				free(buffer); 
-				buffer = nullptr; 
-			}
-			
-			//evResp.detach();	
-			evResp.clearEvent(); // not intuitive, but works SO much better...
-			
-			startInt(irq);
-		}
-		
-	void setPadding(uint8_t b) { padding = b; }
-	
-	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
-	
-	operator bool() {return wavfile;}
-	
-	uint32_t lastReadLoad;		//!< CPU load for last SD card read, spread over the number of audio blocks loaded
-	File wavfile;				//!< file if streaming to/from SD card
-	
-private:
-	bool stopInt()
-	{
-		if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
-		{
-			NVIC_DISABLE_IRQ(IRQ_SOFTWARE);
-			return true;
-		}
-		return false;
-	}
-
-	void startInt(bool enabled)
-	{
-    if (enabled)
-        NVIC_ENABLE_IRQ(IRQ_SOFTWARE);
-	}	
-	
-	static void evFunc(EventResponderRef ref) //!< foreground: respond to request to load WAV data
-	{
-		WavMover& thisWM = *(WavMover*) ref.getData();
-		
-		SPRT("*** ");
-		thisWM.read(thisWM.buffer,thisWM.sz_mem);
-	}
-	EventResponder evResp; 			//!< executes data transfer in foreground
-	int8_t* buffer;					//!< buffer to store pre-loaded WAV data
-	size_t sz_mem;					//!< size of buffer	
-	uint8_t padding;				//!< value to pad buffer at EOF
-	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
-};
-*/
 
 /*********************************************************************************************************/
+/**
+ * Class to move WAV data to and from files, optionally using
+ * EventResponder to decouple interrupt demand from foreground
+ * data access. Of most use with SD cards. 
+ *
+ * Also keeps track of the required memory buffer, holds the 
+ * file object etc.
+ */ 
 class AudioBaseWav
 {
 public:
@@ -226,21 +105,20 @@ public:
 	bool isStopped(void) {return (state == APW_STATE_STOP);};
 
     uint8_t lastErr(void) {return last_err;};
-	size_t memUsed(void) {return /* wavMovr. */getBufferSize();};
+	size_t memUsed(void) {return getBufferSize();};
 	uint32_t filePos(void);
 	uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
 	uint32_t numBits(void) {return bytes * 8;}
 	uint32_t numChannels(void) {return channels;};
 	uint32_t sampleRate(void) {return sample_rate;};
     uint8_t instanceID(void) {return my_instance;};
-    File file(void) {return /* wavMovr. */wavfile;};
-    float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(/* wavMovr. */ lastFileCPUload * bytes * channels);}
+    File file(void) {return wavfile;};
+    float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
 	//--------------------------------------------------------------------------------------------------
-	// Replace old WaveMover stuff
 	bool play(File file); //!< prepare to play a file that's already open
 	
 	// Simple functions we can define immediately:
-	void readLater(void) //!< from interrupt: request re-fill the buffer
+	void readLater(void) //!< from interrupt: request to re-fill the buffer
 		{ 
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
@@ -290,6 +168,7 @@ public:
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
+			
 			return result;
 		}
 		
@@ -308,6 +187,7 @@ public:
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
+			
 			return result;
 		}
 		
@@ -342,14 +222,12 @@ public:
 	
 	operator bool() {return wavfile;}
 	
-	uint32_t lastFileCPUload;		//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
+	uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
 	File wavfile;				//!< file if streaming to/from SD card
 	//--------------------------------------------------------------------------------------------------
 	
 protected:
 	//--------------------------------------------------------------------------------------------------
-	// Replace old WaveMover stuff
-    //WavMover wavMovr;
 	static void evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
 	{
 		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
@@ -431,4 +309,4 @@ private:
 class AudioRecordWav : protected AudioBaseWav, public AudioStream
 {
 };
-#endif
+#endif // defined(KINETISL)
