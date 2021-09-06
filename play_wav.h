@@ -91,9 +91,10 @@
 class AudioBaseWav
 {
 public:
-    AudioBaseWav(void) : buffer {nullptr}
+    AudioBaseWav(void)
 	{
         SPTF("Constructing AudioBaseWav at %X\r\n",this);
+        buf_unaligned = buffer = nullptr;
         #if defined (DEBUG_PIN_PLAYWAV)
             pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
         #endif
@@ -153,8 +154,9 @@ protected:
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
 		{
 			sz_mem = len;
-			buffer = (int8_t*) malloc(sz_mem);
-			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+			buf_unaligned = (int8_t*) malloc(sz_mem + 31);
+            buffer = (int8_t*)((uintptr_t)buf_unaligned & ~32);
+			SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
 		}
@@ -206,11 +208,11 @@ protected:
 			if (wavfile)
 				wavfile.close();
 
-			if (nullptr != buffer)
+			if (nullptr != buf_unaligned)
 			{
-				SPTF("\r\Freed %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-				free(buffer);
-				buffer = nullptr;
+				SPTF("\r\Freed %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+				free(buf_unaligned);
+				buf_unaligned = buffer = nullptr;
 			}
 
 			evResp.clearEvent(); // not intuitive, but works SO much better...
@@ -253,9 +255,10 @@ protected:
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
     uint8_t last_err = APW_ERR_OK;
-    
+
 private:
 	EventResponder evResp; 			//!< executes data transfer in foreground
+    void* buf_unaligned;            // the malloc'd buffer
     int8_t* buffer;					//!< buffer to store pre-loaded WAV data going to or from SD card
 	size_t sz_mem;					//!< size of buffer
 

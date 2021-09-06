@@ -416,7 +416,7 @@ typedef struct {
 } tDataHeader;
 
 
-//AIFF:
+//AIFF, AIFC:
 // http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-1.3.pdf
 // http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-C.9.26.91.pdf
 
@@ -433,6 +433,7 @@ typedef struct {
 
 static const uint32_t cFORM = 0x4D524F46; //'FORM'
 static const uint32_t cAIFF = 0x46464941; //'AIFF'
+static const uint32_t cAIFC = 0x4D464941; //'AIFC'
 static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
 static const uint32_t cSSND = 0x444e5353; //'SSND'
 
@@ -502,7 +503,7 @@ bool AudioPlayWav::readHeader(int newState)
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
                 SPLN("SSND chunk");
-                
+
                 if (bytes == 2) {
                     dataFmt = 3;
                 } else {
