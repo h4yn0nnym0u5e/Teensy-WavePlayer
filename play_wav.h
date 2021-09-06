@@ -43,6 +43,9 @@
 #include <EventResponder.h>
 
 
+#define ENABLE_EVENTRESPONDER_PLAYWAV //comment to reduce codesize, TensyLC: always disabled.
+
+
 #define APW_ERR_OK              0 // no Error
 #define APW_ERR_FORMAT          1 // not supported Format
 #define APW_ERR_FILE   			2 // File not readable (does it exist?)
@@ -69,16 +72,22 @@
 
 //#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
 
-#define CPULOAD_PLAYWAV // Can we remove this before first release?
 
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
+#define USE_EVENTRESPONDER_PLAYWAV 0
 #else
 	const int _AudioPlayWav_MaxChannels = 16;
+#ifdef ENABLE_EVENTRESPONDER_PLAYWAV
+#define USE_EVENTRESPONDER_PLAYWAV 1
 #endif
 
+#endif//defined(KINETISL)
 
-
+//TODO:
+#ifdef USE_EVENTRESPONDER_PLAYWAV
+#define CPULOAD_PLAYWAV // Can we remove this before first release?
+#endif
 
 /*********************************************************************************************************/
 /**
@@ -102,11 +111,22 @@ public:
 
 	}
     ~AudioBaseWav(void){ close(); }
+
 	void pause(bool pause);
 	bool isPaused(void) {return (state == APW_STATE_PAUSED);};
 	bool isStopped(void) {return (state == APW_STATE_STOP);};
+	inline size_t getBufferSize() { return sz_mem; } //!< return size of buffer
+	inline size_t position() { return wavfile.position(); }//!< return file position
+    operator bool() {return wavfile;}
 
-    uint8_t lastErr(void) {return last_err;};
+    #ifdef CPULOAD_PLAYWAV
+    float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
+    uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
+    #endif
+    #if USE_EVENTRESPONDER_PLAYWAV
+	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
+    #endif
+
 	size_t memUsed(void) {return getBufferSize();};
 	uint32_t filePos(void);
 	uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
@@ -114,16 +134,8 @@ public:
 	uint32_t numChannels(void) {return channels;};
 	uint32_t sampleRate(void) {return sample_rate;};
     uint8_t instanceID(void) {return my_instance;};
-    File file(void) {return wavfile;};
-    float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
-	inline size_t getBufferSize() { return sz_mem; } //!< return size of buffer
-	inline size_t position() { return wavfile.position(); }//!< return file position
-	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
+    uint8_t lastErr(void) {return last_err;};
 
-	operator bool() {return wavfile;}
-
-	uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
-	File wavfile;				//!< file if streaming to/from SD card
 	//--------------------------------------------------------------------------------------------------
 
 protected:
@@ -134,18 +146,22 @@ protected:
 	// Simple functions we can define immediately:
 	inline void readLater(void) //!< from interrupt: request to re-fill the buffer
 		{
+            #if USE_EVENTRESPONDER_PLAYWAV
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
 			else
+            #endif
 				read(buffer,sz_mem);		 // read immediately
 
 		}
 
 	inline void writeLater(void) //!< from interrupt: request to write the buffer to filesystem
 		{
+            #if USE_EVENTRESPONDER_PLAYWAV
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
 			else
+            #endif
 				write(buffer,sz_mem);		 // write immediately
 
 		}
@@ -155,8 +171,14 @@ protected:
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
 		{
 			sz_mem = len;
-			buf_unaligned = malloc(sz_mem + 31);
+
+            #if defined(__IMXRT1062__)
+            buf_unaligned = malloc(sz_mem + 31);
             buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
+            #else
+            buf_unaligned = malloc(sz_mem);
+            buffer = (int8_t*) buffer;
+            #endif
 			SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
@@ -223,12 +245,15 @@ protected:
 				free(buf_unaligned);
 				buf_unaligned = buffer = nullptr;
 			}
-
+            
+            #if USE_EVENTRESPONDER_PLAYWAV
 			evResp.clearEvent(); // not intuitive, but works SO much better...
-
+            #endif
+            
 			startInt(irq);
 		}
-
+        
+    #if USE_EVENTRESPONDER_PLAYWAV
 	static void evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
 	{
 		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
@@ -244,7 +269,8 @@ protected:
 		SPRT("*** ");
 		thisWM.write(thisWM.buffer,thisWM.sz_mem);
 	}
-
+    #endif
+    
 	//--------------------------------------------------------------------------------------------------
 
 	bool initRead(File file);
@@ -255,6 +281,8 @@ protected:
 	void stopUsingSPI(void);
     bool stopInt(void);
     void startInt(bool enabled);
+
+    File wavfile;
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
@@ -266,13 +294,17 @@ protected:
     uint8_t last_err = APW_ERR_OK;
 
 private:
-	EventResponder evResp; 			//!< executes data transfer in foreground
-    void* buf_unaligned;            // the malloc'd buffer
-    int8_t* buffer;					//!< buffer to store pre-loaded WAV data going to or from SD card
-	size_t sz_mem;					//!< size of buffer
+    size_t sz_mem;					    //!< size of buffer
+    void* buf_unaligned;                // the malloc'd buffer
+    int8_t* buffer;					    //!< buffer to store pre-loaded WAV data going to or from SD card
+    
+    #if USE_EVENTRESPONDER_PLAYWAV
+	EventResponder evResp; 			    //!< executes data transfer in foreground
+    static bool eventReadingEnabled;    //!< true to read filesystem via EventResponder; otherwise inside update() as usual
+    #endif
+    
+	uint8_t padding;				    //!< value to pad buffer at EOF
 
-	uint8_t padding;				//!< value to pad buffer at EOF
-	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
 };
 
 /*********************************************************************************************************/
@@ -294,16 +326,14 @@ public:
 	uint32_t positionMillis(void);
 	uint32_t channelMask(void) {return channelmask;};
 	virtual void update(void);
+    #if USE_EVENTRESPONDER_PLAYWAV
 	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
-	float getCPUload()
-	{ 	// correct for bytes/sample and number of channels in file
-		return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);
-	}
+    #endif
 private:
     void begin(void);
 	void end(void);
 	bool readHeader(int newState);
-    size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);    
+    size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask

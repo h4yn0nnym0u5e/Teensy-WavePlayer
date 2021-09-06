@@ -59,8 +59,8 @@ static uint8_t _sz_mem_additional = 1;
 
 
 //----------------------------------------------------------------------------------------------------
+#if !defined(KINETISL)
 //Reverse Byte order:
-
 __attribute__( ( always_inline ) ) static inline uint32_t __rev(uint32_t value)
 {
   uint32_t result;
@@ -74,6 +74,7 @@ __attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value
   asm volatile ("rev16 %0, %1" : "=r" (result) : "r" (value) );
   return(result);
 }
+#endif
 
 //----------------------------------------------------------------------------------------------------
 bool AudioBaseWav::stopInt()
@@ -158,15 +159,18 @@ void AudioBaseWav::stopUsingSPI(void)
 }
 
 //----------------------------------------------------------------------------------------------------
+#if USE_EVENTRESPONDER_PLAYWAV
 bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem in EventResponder, otherwise accesses happen under interrupt
+#endif
 /*
  * Initialise ready to move data from SD card to memory
  */
 bool AudioBaseWav::initRead(File file)
 {
 	wavfile = file;
+    #if USE_EVENTRESPONDER_PLAYWAV    
 	evResp.attach(evFuncRead);
-
+    #endif
 	return true;
 }
 
@@ -176,8 +180,9 @@ bool AudioBaseWav::initRead(File file)
 bool AudioBaseWav::initWrite(File file)
 {
 	wavfile = file;
+    #if USE_EVENTRESPONDER_PLAYWAV    
 	evResp.attach(evFuncWrite);
-
+    #endif
 	return true;
 }
 
@@ -251,6 +256,7 @@ size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 }
 
 // 16 bit big endian:
+#if !defined(KINETISL)
 __attribute__((hot)) static
 size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
@@ -266,6 +272,7 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
     return (int8_t*)p - buffer;
 
 }
+#endif
 
 // Todo:
 //- upsampling (CMSIS?)
@@ -465,6 +472,7 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_FORMAT;
     position = sizeof(fileHeader);
 
+#if !defined(KINETISL)
     if ( fileHeader.id == cFORM && fileHeader.riffType == cAIFF)
     {
         // ---------- AIFF ----------------------------
@@ -519,6 +527,8 @@ bool AudioPlayWav::readHeader(int newState)
 
     }  // AIFF
 	else
+#endif
+        
     if ( fileHeader.id == cRIFF && fileHeader.riffType == cWAVE )
     {
         // ---------- WAV ----------------------------
@@ -602,11 +612,9 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_OK;
 
     setPadding(0);
-    dataFmt = 0; //todo;
 
     switch(bytes) {
         case 1: switch (dataFmt) {
-
                     case 0: decoder = &decode_8bit;
                             setPadding(128);
                             break;
@@ -620,8 +628,10 @@ bool AudioPlayWav::readHeader(int newState)
         case 2: switch (dataFmt) {
                     case 0 : decoder = &decode_16bit;
                              break;
+                    #if !defined(KINETISL)
                     case 3 : decoder = &decode_16bit_bigendian;
                              break;
+                    #endif
                 }
                 break;
     }
@@ -674,16 +684,16 @@ void  AudioPlayWav::update(void)
 		}
 	} while (++chan < channels);
 
-	int8_t* currentPos = getBuffer(); // buffer pointer: don't cache, could change in the future
+	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
     //if (nullptr == currentPos) return; //This WILL NOT happen. IF it happens, let it crash for easier debug.
 
 	// copy the samples to the audio blocks:
-    buffer_rd = decoder(currentPos, buffer_rd, queue, channels);
+    buffer_rd = decoder(buffer, buffer_rd, queue, channels);
 
     size_t sz_mem = getBufferSize();
     if (buffer_rd >= sz_mem ) {
-        buffer_rd = 0;
         readLater();    // trigger buffer fill
+        buffer_rd = 0;
     }
 
 	// transmit them:
