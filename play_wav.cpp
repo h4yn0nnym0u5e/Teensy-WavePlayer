@@ -57,6 +57,25 @@ static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
 #endif // defined(KINETISL)
 
+
+//----------------------------------------------------------------------------------------------------
+//Reverse Byte order:
+
+__attribute__( ( always_inline ) ) static inline uint32_t __rev(uint32_t value)
+{
+  uint32_t result;
+  asm volatile ("rev %0, %1" : "=r" (result) : "r" (value) );
+  return(result);
+}
+
+__attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value)
+{
+  uint32_t result;
+  asm volatile ("rev16 %0, %1" : "=r" (result) : "r" (value) );
+  return(result);
+}
+
+
 //----------------------------------------------------------------------------------------------------
 bool AudioBaseWav::stopInt()
 {
@@ -234,6 +253,23 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 
 }
 
+// 16 bit big endian:
+__attribute__((hot))
+void decode_16bit_bigendian(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+{
+
+    int16_t *p = (int16_t*) &buffer[*buffer_rd];
+    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = __rev16(*p++);
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+
+}
+
 // Todo:
 //- upsampling (CMSIS?)
 //- downsampling (CMSIS?) (is that really needed? pretty inefficient to load way more data than necessary and downsample then..
@@ -261,13 +297,6 @@ void AudioPlayWav::end(void)
 #endif // !defined(KINETISL)
 }
 
-
-bool AudioPlayWav::play(File file)
-{
-    return play(file, false);
-}
-
-
 bool AudioPlayWav::play(File file, const bool paused)
 {
     stop();
@@ -282,13 +311,6 @@ bool AudioPlayWav::play(File file, const bool paused)
     }
     return true;
 }
-
-
-bool AudioPlayWav::play(const char *filename)
-{
-    return play(filename, false);
-}
-
 
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
@@ -322,6 +344,7 @@ void AudioPlayWav::stop(void)
 }
 
 
+//WAV:
 /*
   00000000  52494646 66EA6903 57415645 666D7420  RIFFf.i.WAVEfmt
   00000010  10000000 01000200 44AC0000 10B10200  ........D.......
@@ -393,6 +416,31 @@ typedef struct {
 } tDataHeader;
 
 
+//AIFF:
+/*
+ 00000000  46 4F 52 4D 00 01 6F 94 41 49 46 46 43 4F 4D 4D  FORM..o”AIFFCOMM
+ 00000010  00 00 00 12 00 02 00 00 5B C5 00 10 40 0B FA 00  ........[Å..@.ú.
+ 00000020  00 00 00 00 00 00 41 4E 4E 4F 00 00 00 49 41 46  ......ANNO...IAF
+ 00000030  73 70 64 61 74 65 3A 20 32 30 30 33 2D 30 31 2D  spdate: 2003-01-
+ 00000040  33 30 20 30 33 3A 32 38 3A 33 36 20 55 54 43 00  30 03:28:36 UTC.
+ 00000050  75 73 65 72 3A 20 6B 61 62 61 6C 40 43 41 50 45  user: kabal@CAPE
+ 00000060  4C 4C 41 00 70 72 6F 67 72 61 6D 3A 20 43 6F 70  LLA.program: Cop
+ 00000070  79 41 75 64 69 6F 00 00 53 53 4E 44 00 01 6F 1C  yAudio..SSND..o.
+*/
+
+static const uint32_t cFORM = 0x4D524F46; //'FORM'
+static const uint32_t cAIFF = 0x46464941; //'AIFF'
+static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
+static const uint32_t cSSND = 0x444e5353; //'SSND'
+
+typedef struct {
+    short numChannels;
+    unsigned long numSampleFrames;
+    short sampleSize;
+    //uint8_t sampleRate[10]; //80 bit floating point... ingnore that!
+}  __attribute__ ((__packed__)) taiffCommonChunk;
+
+
 bool AudioPlayWav::readHeader(int newState)
 {
     size_t sz_frame, position, rd;
@@ -402,6 +450,7 @@ bool AudioPlayWav::readHeader(int newState)
 
     buffer_rd = total_length = data_length = 0;
     channelmask = sample_rate = channels = bytes = 0;
+    dataFmt = fileFmt = 0;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
@@ -413,60 +462,115 @@ bool AudioPlayWav::readHeader(int newState)
     if (rd < sizeof(fileHeader)) return false;
 
     last_err = APW_ERR_FORMAT;
-	if ( fileHeader.id != cRIFF || fileHeader.riffType != cWAVE ) return false;
-
-	position = sizeof(fileHeader);
     fmtok = false;
+    position = sizeof(fileHeader);
 
-    do {
-        irq = stopInt();
-        wavfile.seek(position);
-        rd = read(&dataHeader, sizeof(dataHeader));
-        startInt(irq);
+    if ( fileHeader.id == cFORM && fileHeader.riffType == cAIFF)
+    {
+        // ---------- AIFF ----------------------------
+        SPLN("Format: AIFF");
+        //unlike wav, the samples chunk (here "SSND") can everywhere in the file!
+        //unfortunately, it is big endian :-(
+        fileFmt = 3;
+        dataFmt = 3;
+        bool COMMread = false;
+        bool SSNDread = false;
 
-        if (rd < sizeof(dataHeader)) return false;
-
-        if (dataHeader.chunkID == cFMT) {
-            tFmtHeaderEx fmtHeader;
-            memset((void*)&fmtHeader, 0, sizeof(tFmtHeaderEx));
-
-            //Serial.println(dataHeader.chunkSize);
+        do {
             irq = stopInt();
-            if (dataHeader.chunkSize < 16) {
-                read(&fmtHeader, sizeof(tFmtHeader));
-                bytes = 1;
-            } else if (dataHeader.chunkSize == 16) {
-                read(&fmtHeader, sizeof(tFmtHeaderEx));
-                bytes = fmtHeader.wBitsPerSample / 8;
-            } else {
-                tFmtHeaderExtensible fmtHeaderExtensible;
-                read(&fmtHeader, sizeof(tFmtHeaderEx));
-                bytes = fmtHeader.wBitsPerSample / 8;
-                memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
-                read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
-                channelmask = fmtHeaderExtensible.dwChannelMask;
-                //Serial.printf("channel mask: 0x%x\n", channelmask);
-            }
+            wavfile.seek(position);
+            rd = read(&dataHeader, sizeof(dataHeader));
+            startInt(irq);
+            dataHeader.chunkSize = __rev(dataHeader.chunkSize);
+            //Serial.printf("ChunkSize:%x Chunk:%x\n",dataHeader.chunkSize, dataHeader.chunkID);
+            if (rd < sizeof(dataHeader)) return false;
+            if (!COMMread && dataHeader.chunkID == cCOMM) {
+                SPLN("COMM chunk");
+                taiffCommonChunk commonChunk;
+                rd = read(&commonChunk, sizeof(commonChunk));
+                channels = __rev16(commonChunk.numChannels);
+                total_length = __rev(commonChunk.numSampleFrames);
+                bytes = __rev16 (commonChunk.sampleSize) / 8;
+                sample_rate = 0;
+                //Serial.printf("%d %d %d\n", (int)channels, (int)total_length, (int)bytes);
+                if (bytes == 0 || bytes > 2) return false;
+                if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
+                if (SSNDread) break;
+                COMMread = true;
+            } else if (dataHeader.chunkID == cSSND) {
+                //todo offset etc...
+                SPLN("SSND chunk");
+                if (COMMread) break;
+                SSNDread = true;
+            } ;
+
+            position += sizeof(dataHeader) + dataHeader.chunkSize ;
+            if (position & 1) position++; //make position even
+        } while(true);
+        
+        fmtok = true;
+
+    }  // AIFF
+	else
+    if ( fileHeader.id == cRIFF && fileHeader.riffType == cWAVE )
+    {
+        // ---------- WAV ----------------------------
+        SPLN("Format: WAV");
+
+        do {
+            irq = stopInt();
+            wavfile.seek(position);
+            rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
 
-            //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
-            sample_rate = fmtHeader.dwSamplesPerSec;
-            channels = fmtHeader.wChannels;
-            if (bytes == 0 || bytes > 2) return false;
-            if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-            if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;
-            fmtok = true;
-        }
-        else if (dataHeader.chunkID == cDATA) break;
+            if (rd < sizeof(dataHeader)) return false;
 
-        position += sizeof(dataHeader) + dataHeader.chunkSize;
-    } while(true);
+            if (dataHeader.chunkID == cFMT) {
+                tFmtHeaderEx fmtHeader;
+                memset((void*)&fmtHeader, 0, sizeof(tFmtHeaderEx));
 
-    if (fmtok != true) return false;
+                //Serial.println(dataHeader.chunkSize);
+                irq = stopInt();
+                if (dataHeader.chunkSize < 16) {
+                    read(&fmtHeader, sizeof(tFmtHeader));
+                    bytes = 1;
+                } else if (dataHeader.chunkSize == 16) {
+                    read(&fmtHeader, sizeof(tFmtHeaderEx));
+                    bytes = fmtHeader.wBitsPerSample / 8;
+                } else {
+                    tFmtHeaderExtensible fmtHeaderExtensible;
+                    read(&fmtHeader, sizeof(tFmtHeaderEx));
+                    bytes = fmtHeader.wBitsPerSample / 8;
+                    memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
+                    read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
+                    channelmask = fmtHeaderExtensible.dwChannelMask;
+                    //Serial.printf("channel mask: 0x%x\n", channelmask);
+                }
+                startInt(irq);
+
+                //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
+                sample_rate = fmtHeader.dwSamplesPerSec;
+                channels = fmtHeader.wChannels;
+                if (bytes == 0 || bytes > 2) return false;
+                if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
+                if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;             
+                fmtok = true;
+            }
+            else 
+            if (dataHeader.chunkID == cDATA) {
+                    total_length = dataHeader.chunkSize;
+                    break;
+            }
+
+            position += sizeof(dataHeader) + dataHeader.chunkSize;
+        } while(true);
+        
+        if (fmtok != true) return false;
+
+    }  //wav
 
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
-    total_length = dataHeader.chunkSize;
-	data_length = dataHeader.chunkSize / (sz_frame * bytes);
+    data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
     size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
@@ -497,8 +601,12 @@ bool AudioPlayWav::readHeader(int newState)
                             break;
                 }
 
-        case 2: decoder =  &decode_16bit;
-                break;
+        case 2: switch (dataFmt) {
+                    case 0 : decoder = &decode_16bit;
+                             break;
+                    case 3 : decoder = &decode_16bit_bigendian;
+                             break;
+                }
     }
 
 #if !defined(KINETISL)

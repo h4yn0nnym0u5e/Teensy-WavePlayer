@@ -114,8 +114,7 @@ public:
     uint8_t instanceID(void) {return my_instance;};
     File file(void) {return wavfile;};
     float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
-	//--------------------------------------------------------------------------------------------------
-	bool play(File file); //!< prepare to play a file that's already open
+	//--------------------------------------------------------------------------------------------------	
 	
 	// Simple functions we can define immediately:
 	void readLater(void) //!< from interrupt: request to re-fill the buffer
@@ -261,8 +260,8 @@ protected:
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
-    uint8_t fileFmt = 0;                // file format (0 = *.wav, more to come)
-    uint8_t dataFmt = 0;                // data format (0 = std, 1 = 8 bit signed, 2 = ulaw)
+    uint8_t fileFmt = 0;                // file format (0 = *.wav, 3= *.aif, more to come)
+    uint8_t dataFmt = 0;                // data format (0 = std, 1 = 8 bit signed, 2 = ulaw, 3=16bit big endian)
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
@@ -277,14 +276,12 @@ class AudioPlayWav : public AudioBaseWav, public AudioStream
 public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
 	~AudioPlayWav(void) { end(); } // no need to free audio blocks, never permanently allocates any
-    void stop(void);
-	bool play(File file);
-	bool play(File file, bool paused);
-	bool play(const char *filename);
-	bool play(const char *filename, bool paused); // optional start in paused state
+    void stop(void);	
+	bool play(File file, bool paused = false);
+	bool play(const char *filename, bool paused = false); // optional start in paused state
     // Todo:
     // - playRaw
-    // - playAiff (?)
+    // - playAiff (!! code added, untested, test needed!!)    
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void) {togglePause();};
     bool isPlaying(void) {return isRunning();};
@@ -306,8 +303,8 @@ private:
 	uint32_t channelmask = 0;           // dwChannelMask
 };
 
-#if 0 && defined(KINETISL)
-class AudioRecordWav : protected AudioBaseWav, public AudioStream
+#if 0 && !defined(KINETISL)
+class AudioRecordWav : public AudioBaseWav, public AudioStream
 {
 };
 #endif // defined(KINETISL)
