@@ -11,7 +11,7 @@ Extended version
 - addMemoryForRead() adds memory
 - syncronized start
 
-## Formats:
+## Working Formats:
 - n channel 8 bit unsigned *.wav
 - n channel 16 bit signed *.wav
 - n channel 8 bit signed *.aiff
