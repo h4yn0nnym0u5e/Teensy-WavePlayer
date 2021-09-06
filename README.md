@@ -13,10 +13,11 @@ Extended version
 
 ## Working Formats:
 - n channel 8 bit unsigned *.wav
+- n channel u-law *.wav
 - n channel 16 bit signed *.wav
 - n channel 8 bit signed *.aiff
 - n channel 16 bit signed *.aiff
-- Formats in development: u-law, aif 8 bit unsigned
+- Formats in development: aiff u-law, aif 8 bit unsigned, raw
 
 
 
