@@ -11,6 +11,14 @@ Extended version
 - addMemoryForRead() adds memory
 - syncronized start
 
+## Formats:
+- n channel 8 bit unsigned *.wav
+- n channel 16 bit signed *.wav
+- n channel 8 bit signed *.aiff
+- n channel 16 bit signed *.aiff
+- Formats in development: u-law, aif 8 bit unsigned
+
+
 
 Example wave files taken from here:
 https://www.jensign.com/bdp95/7dot1voiced/index.html
