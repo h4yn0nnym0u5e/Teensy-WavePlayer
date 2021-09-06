@@ -154,7 +154,7 @@ protected:
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
 		{
 			sz_mem = len;
-			buf_unaligned = (int8_t*) malloc(sz_mem + 31);
+			buf_unaligned = malloc(sz_mem + 31);
             buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
 			SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;

@@ -75,7 +75,6 @@ __attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value
   return(result);
 }
 
-
 //----------------------------------------------------------------------------------------------------
 bool AudioBaseWav::stopInt()
 {
@@ -564,7 +563,13 @@ bool AudioPlayWav::readHeader(int newState)
                 channels = fmtHeader.wChannels;
                 if (bytes == 0 || bytes > 2) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-                if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;
+                if (fmtHeader.wFormatTag != 1 && 
+                    fmtHeader.wFormatTag != 7 && //ulaw
+                    fmtHeader.wFormatTag != 65534) return false;   
+                if (fmtHeader.wFormatTag == 7) {
+                    if (bytes != 1) return false;
+                    dataFmt = 2; //ulaw
+                }
                 fmtok = true;
             }
             else
