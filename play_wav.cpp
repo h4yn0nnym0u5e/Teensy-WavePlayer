@@ -185,7 +185,7 @@ bool AudioBaseWav::initWrite(File file)
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
-__attribute__((hot))
+__attribute__((hot)) static
 void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
     int8_t *p = &buffer[*buffer_rd];
@@ -203,7 +203,7 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
 
 
 // 8 bit signed:
-__attribute__((hot))
+__attribute__((hot)) static
 void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
     int8_t *p = &buffer[*buffer_rd];
@@ -220,7 +220,7 @@ void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue
 }
 
 // 8 bit ulaw:
-__attribute__((hot))
+__attribute__((hot)) static
 void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
     int8_t *p = &buffer[*buffer_rd];
@@ -237,7 +237,7 @@ void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[]
 }
 
 // 16 bit:
-__attribute__((hot))
+__attribute__((hot)) static
 void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
 
@@ -254,7 +254,7 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 }
 
 // 16 bit big endian:
-__attribute__((hot))
+__attribute__((hot)) static
 void decode_16bit_bigendian(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
 {
 
@@ -446,7 +446,7 @@ bool AudioPlayWav::readHeader(int newState)
     size_t sz_frame, position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
-    bool irq, fmtok;
+    bool irq;
 
     buffer_rd = total_length = data_length = 0;
     channelmask = sample_rate = channels = bytes = 0;
@@ -461,8 +461,7 @@ bool AudioPlayWav::readHeader(int newState)
     startInt(irq);
     if (rd < sizeof(fileHeader)) return false;
 
-    last_err = APW_ERR_FORMAT;
-    fmtok = false;
+    last_err = APW_ERR_FORMAT;    
     position = sizeof(fileHeader);
 
     if ( fileHeader.id == cFORM && fileHeader.riffType == cAIFF)
@@ -507,8 +506,7 @@ bool AudioPlayWav::readHeader(int newState)
             position += sizeof(dataHeader) + dataHeader.chunkSize ;
             if (position & 1) position++; //make position even
         } while(true);
-        
-        fmtok = true;
+
 
     }  // AIFF
 	else
@@ -516,6 +514,7 @@ bool AudioPlayWav::readHeader(int newState)
     {
         // ---------- WAV ----------------------------
         SPLN("Format: WAV");
+        bool fmtok = false;
 
         do {
             irq = stopInt();

@@ -1,13 +1,13 @@
-/* 
-   Wavefile player 
+/*
+   Wavefile player
    Copyright (c) 2021, Frank Bösing, f.boesing @ gmx (dot) de
-   
-   for 
-   
+
+   for
+
    Audio Library for Teensy
    Copyright (c) 2014, Paul Stoffregen, paul@pjrc.com
 
-   
+
    Development of this audio library was funded by PJRC.COM, LLC by sales of
    Teensy and Audio Adaptor boards.  Please support PJRC's efforts to develop
    open source software by purchasing Teensy or other PJRC products.
@@ -61,10 +61,10 @@
 #define SPTF(...) Serial.printf(__VA_ARGS__)
 #define SFSH(...) Serial.flush()
 #else
-#define SPLN(...) 
-#define SPRT(...) 
-#define SPTF(...) 
-#define SFSH(...) 
+#define SPLN(...)
+#define SPRT(...)
+#define SPTF(...)
+#define SFSH(...)
 #endif  // defined(DEBUG_PRINT_PLAYWAV)
 
 //#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
@@ -83,21 +83,21 @@
 /**
  * Class to move WAV data to and from files, optionally using
  * EventResponder to decouple interrupt demand from foreground
- * data access. Of most use with SD cards. 
+ * data access. Of most use with SD cards.
  *
- * Also keeps track of the required memory buffer, holds the 
+ * Also keeps track of the required memory buffer, holds the
  * file object etc.
- */ 
+ */
 class AudioBaseWav
 {
 public:
-    AudioBaseWav(void) : buffer {nullptr} 
+    AudioBaseWav(void) : buffer {nullptr}
 	{
         SPTF("Constructing AudioBaseWav at %X\r\n",this);
         #if defined (DEBUG_PIN_PLAYWAV)
             pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
         #endif
-		
+
 	}
     ~AudioBaseWav(void){ close(); }
 	void pause(bool pause);
@@ -114,141 +114,128 @@ public:
     uint8_t instanceID(void) {return my_instance;};
     File file(void) {return wavfile;};
     float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
-	//--------------------------------------------------------------------------------------------------	
-	
+	inline size_t getBufferSize() { return sz_mem; } //!< return size of buffer
+	inline size_t position() { return wavfile.position(); }//!< return file position
+	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
+
+	operator bool() {return wavfile;}
+
+	uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
+	File wavfile;				//!< file if streaming to/from SD card
+	//--------------------------------------------------------------------------------------------------
+
+protected:
+	//--------------------------------------------------------------------------------------------------
+    inline void setPadding(uint8_t b) { padding = b; }
+    inline void seek(size_t pos) { wavfile.seek(pos); }//!< seek to new file position
+
 	// Simple functions we can define immediately:
 	void readLater(void) //!< from interrupt: request to re-fill the buffer
-		{ 
+		{
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
 			else
 				read(buffer,sz_mem);		 // read immediately
-				
+
 		}
-		
+
 	void writeLater(void) //!< from interrupt: request to write the buffer to filesystem
-		{ 
+		{
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
 			else
 				write(buffer,sz_mem);		 // write immediately
-				
+
 		}
-		
-	inline int8_t* getBuffer() //!< return pointer to buffer holding WAV data
-		{ return buffer; }
-		
-	inline size_t getBufferSize() //!< return size of buffer
-		{ return sz_mem; }
-		
+
+	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
+
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
-		{ 
-			sz_mem = len; 
-			buffer = (int8_t*) malloc(sz_mem); 
+		{
+			sz_mem = len;
+			buffer = (int8_t*) malloc(sz_mem);
 			SPTF("Allocated %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
 			return buffer;
 		}
-		
+
 	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
-		{ 
+		{
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
             #endif
 			uint32_t tmp = ARM_DWT_CYCCNT;
 			size_t result = wavfile.read(buf,len);
-			
-			if ( result < len ) 
-				memset((int8_t*) buf+result, padding , len - result);				
+
+			if ( result < len )
+				memset((int8_t*) buf+result, padding , len - result);
 			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-			
+
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
-			
+
 			return result;
 		}
-		
+
 	inline size_t write(void* buf,size_t len) //!< write len bytes immediately from buffer to filesystem
-		{ 
+		{
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
             #endif
 			uint32_t tmp = ARM_DWT_CYCCNT;
 			size_t result = wavfile.write(buf,len);
-			
+
 			SPTF("Wrote %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-			
+
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
-			
+
 			return result;
 		}
-		
-	inline void seek(size_t pos) //!< seek to new file position
-		{ wavfile.seek(pos); }
-		
-	inline size_t position() //!< return file position
-		{ return wavfile.position(); }
-		
-	void close() //!< close file, free up the buffer, detach responder
-		{ 
+
+    void close() //!< close file, free up the buffer, detach responder
+		{
 			bool irq = stopInt();
-			
-			if (wavfile)  
-				wavfile.close();  
-			
-			if (nullptr != buffer) 
-			{ 
+
+			if (wavfile)
+				wavfile.close();
+
+			if (nullptr != buffer)
+			{
 				SPTF("\r\Freed %d bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-				free(buffer); 
-				buffer = nullptr; 
+				free(buffer);
+				buffer = nullptr;
 			}
-			
+
 			evResp.clearEvent(); // not intuitive, but works SO much better...
-			
+
 			startInt(irq);
 		}
-		
-	void setPadding(uint8_t b) { padding = b; }
-	
-	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
-	
-	operator bool() {return wavfile;}
-	
-	uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
-	File wavfile;				//!< file if streaming to/from SD card
-	//--------------------------------------------------------------------------------------------------
-	
-protected:
-	//--------------------------------------------------------------------------------------------------
+
 	static void evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
 	{
 		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
-		
+
 		SPRT("*** ");
 		thisWM.read(thisWM.buffer,thisWM.sz_mem);
 	}
-	
+
 	static void evFuncWrite(EventResponderRef ref) //!< foreground: respond to request to save WAV data
 	{
 		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
-		
+
 		SPRT("*** ");
 		thisWM.write(thisWM.buffer,thisWM.sz_mem);
 	}
-	EventResponder evResp; 			//!< executes data transfer in foreground
-	int8_t* buffer;					//!< buffer to store pre-loaded WAV data going to or from SD card
-	size_t sz_mem;					//!< size of buffer	
-	uint8_t padding;				//!< value to pad buffer at EOF
-	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
+
 	//--------------------------------------------------------------------------------------------------
-	
+
 	bool initRead(File file);
 	bool initWrite(File file);
     bool isRunning(void);
@@ -266,7 +253,14 @@ protected:
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
     uint8_t last_err = APW_ERR_OK;
+    
 private:
+	EventResponder evResp; 			//!< executes data transfer in foreground
+    int8_t* buffer;					//!< buffer to store pre-loaded WAV data going to or from SD card
+	size_t sz_mem;					//!< size of buffer
+
+	uint8_t padding;				//!< value to pad buffer at EOF
+	static bool eventReadingEnabled;//!< true to read filesystem via EventResponder; otherwise inside update() as usual
 };
 
 /*********************************************************************************************************/
@@ -276,12 +270,12 @@ class AudioPlayWav : public AudioBaseWav, public AudioStream
 public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
 	~AudioPlayWav(void) { end(); } // no need to free audio blocks, never permanently allocates any
-    void stop(void);	
+    void stop(void);
 	bool play(File file, bool paused = false);
 	bool play(const char *filename, bool paused = false); // optional start in paused state
     // Todo:
     // - playRaw
-    // - playAiff (!! code added, untested, test needed!!)    
+    // - playAiff (!! code added, untested, test needed!!)
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void) {togglePause();};
     bool isPlaying(void) {return isRunning();};
@@ -289,10 +283,10 @@ public:
 	uint32_t channelMask(void) {return channelmask;};
 	virtual void update(void);
 	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
-	float getCPUload() 
+	float getCPUload()
 	{ 	// correct for bytes/sample and number of channels in file
-		return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels); 
-	}  
+		return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);
+	}
 private:
     void begin(void);
 	void end(void);
