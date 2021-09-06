@@ -38,12 +38,6 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
-/*
-extern "C" {
-    extern const int16_t ulaw_decode_table[256];
-};
-*/
-
 //#define HANDLE_SPI    1 //TODO...
 
 #if defined(KINETISL)
@@ -224,6 +218,7 @@ size_t decode_8bit_signed(int8_t buffer[], size_t buffer_rd, audio_block_t *queu
 
 }
 
+//https://github.com/dpwe/dpwelib
 const static short ulaw_decode[256] = {
     -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
     -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
@@ -268,9 +263,7 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
     do {
         unsigned int chan = 0;
         do {
-            uint8_t s = (*p++);
-            //queue[chan]->data[i] = ulaw_decode_table[s];
-            queue[chan]->data[i] = ulaw_decode[s];
+            queue[chan]->data[i] = ulaw_decode[*p++];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return (int8_t*)p - buffer;
@@ -474,17 +467,26 @@ typedef struct {
 
 static const uint32_t cFORM = 0x4D524F46; //'FORM'
 static const uint32_t cAIFF = 0x46464941; //'AIFF'
-static const uint32_t cAIFC = 0x4D464941; //'AIFC'
+static const uint32_t cAIFC = 0x43464941; //'AIFC'
 static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
 static const uint32_t cSSND = 0x444e5353; //'SSND'
-static const uint32_t cULAW = 0x57414C55; //'ULAW'
+//static const uint32_t cULAW = 0x57414C55; //'ULAW' // not supported
+static const uint32_t culaw = 0x77616c75; //'ulaw'
 
 typedef struct {
     short numChannels;
     unsigned long numSampleFrames;
     short sampleSize;
-    //uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ingnore that!
+    uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
 }  __attribute__ ((__packed__)) taiffCommonChunk;
+
+typedef struct {
+    short numChannels;
+    unsigned long numSampleFrames;
+    short sampleSize;
+    uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
+    unsigned long compressionType;
+}  __attribute__ ((__packed__)) taifcCommonChunk;
 
 
 bool AudioPlayWav::readHeader(int newState)
@@ -515,7 +517,7 @@ bool AudioPlayWav::readHeader(int newState)
        (fileHeader.riffType == cAIFF || fileHeader.riffType == cAIFC))
     {
         // ---------- AIFF ----------------------------
-        Serial.println("Format: AIFF");
+        //Serial.println("Format: AIFF");
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
         fileFmt = 3;
@@ -531,11 +533,11 @@ bool AudioPlayWav::readHeader(int newState)
             startInt(irq);
             dataHeader.chunkSize = __rev(dataHeader.chunkSize);            
             if (rd < sizeof(dataHeader)) return false;
-            Serial.printf("Chunk:%c%c%c%c", (char)dataHeader.chunkID & 0xff, (char)(dataHeader.chunkID >> 8 & 0xff), (char)(dataHeader.chunkID  >> 16 & 0xff), (char)(dataHeader.chunkID >> 24 &0xff));
-            Serial.printf(" %x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
+            //Serial.printf("Chunk:%c%c%c%c", (char)dataHeader.chunkID & 0xff, (char)(dataHeader.chunkID >> 8 & 0xff), (char)(dataHeader.chunkID  >> 16 & 0xff), (char)(dataHeader.chunkID >> 24 &0xff));
+            //Serial.printf(" %x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
             if (!COMMread && dataHeader.chunkID == cCOMM) {
-                Serial.print(":COMM ");
-                taiffCommonChunk commonChunk;
+                //Serial.print(":COMM ");
+                taifcCommonChunk commonChunk;                
                 rd = read(&commonChunk, sizeof(commonChunk));
                 if (rd < sizeof(commonChunk)) return false;
 
@@ -544,30 +546,32 @@ bool AudioPlayWav::readHeader(int newState)
                 bytes = commonChunk.sampleSize / 8;
                 total_length = __rev(commonChunk.numSampleFrames) * channels * bytes;
                 
-                Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
+                //Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
                 if (total_length == 0) return false;
                 if (commonChunk.sampleSize != 8 && commonChunk.sampleSize != 16) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
+                
+                if (bytes == 2) {
+                    dataFmt = 3;
+                } else {
+                    dataFmt = 1; //8 Bit signed
+                    //Serial.printf("compression%c%c%c%c", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff));
+                    if (isAIFC && (/*commonChunk.compressionType == cULAW ||*/ commonChunk.compressionType == culaw)) {
+                        //Serial.println("ulaw");
+                        dataFmt = 2; //ulaw
+                    }
+                }
                 
                 sample_rate = 0;
                
                 COMMread = true;
                 if (SSNDread) break;
                 
-                Serial.println("OK");
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
-                Serial.println(":SSND");
-
-                if (bytes == 2) {
-                    dataFmt = 3;
-                } else {
-                    dataFmt = 1; //TODO: ulaw: Different header!!
-                }
-
+                //Serial.println(":SSND");
                 SSNDread = true;
-                if (COMMread) break;
-                
+                if (COMMread) break;                
             } ;
             
             position += sizeof(dataHeader) + dataHeader.chunkSize ;
@@ -628,7 +632,7 @@ bool AudioPlayWav::readHeader(int newState)
                 if (fmtHeader.wFormatTag == 7) {
                     if (bytes != 1) return false;
                     dataFmt = 2; //ulaw
-                    Serial.println("ULAW!");
+                    //Serial.println("ULAW!");
                 }
                 fmtok = true;
             }
@@ -820,4 +824,5 @@ uint32_t AudioPlayWav::positionMillis(void)
     startInt(irq);
     return ret;
 }
+
 #endif // !defined(KINETISL)
