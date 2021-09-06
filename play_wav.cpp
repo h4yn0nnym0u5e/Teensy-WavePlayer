@@ -615,6 +615,7 @@ bool AudioPlayWav::readHeader(int newState)
                     case 2: decoder = &decode_8bit_ulaw;
                             break;
                 }
+                break;
 
         case 2: switch (dataFmt) {
                     case 0 : decoder = &decode_16bit;
@@ -622,6 +623,7 @@ bool AudioPlayWav::readHeader(int newState)
                     case 3 : decoder = &decode_16bit_bigendian;
                              break;
                 }
+                break;
     }
 
 #if !defined(KINETISL)
