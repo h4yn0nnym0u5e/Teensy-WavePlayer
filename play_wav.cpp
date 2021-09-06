@@ -168,7 +168,7 @@ bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem i
 bool AudioBaseWav::initRead(File file)
 {
 	wavfile = file;
-    #if USE_EVENTRESPONDER_PLAYWAV    
+    #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncRead);
     #endif
 	return true;
@@ -180,7 +180,7 @@ bool AudioBaseWav::initRead(File file)
 bool AudioBaseWav::initWrite(File file)
 {
 	wavfile = file;
-    #if USE_EVENTRESPONDER_PLAYWAV    
+    #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncWrite);
     #endif
 	return true;
@@ -233,7 +233,8 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
     do {
         unsigned int chan = 0;
         do {
-            queue[chan]->data[i] = ulaw_decode_table[*p++];
+            uint8_t s = *p++;
+            queue[chan]->data[i] = ulaw_decode_table[s];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return (int8_t*)p - buffer;
@@ -440,6 +441,7 @@ static const uint32_t cAIFF = 0x46464941; //'AIFF'
 static const uint32_t cAIFC = 0x4D464941; //'AIFC'
 static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
 static const uint32_t cSSND = 0x444e5353; //'SSND'
+static const uint32_t cULAW = 0x57414C55; //'ULAW'
 
 typedef struct {
     short numChannels;
@@ -473,14 +475,16 @@ bool AudioPlayWav::readHeader(int newState)
     position = sizeof(fileHeader);
 
 #if !defined(KINETISL)
-    if ( fileHeader.id == cFORM && fileHeader.riffType == cAIFF)
+    if (fileHeader.id == cFORM &&
+       (fileHeader.riffType == cAIFF || fileHeader.riffType == cAIFC))
     {
         // ---------- AIFF ----------------------------
-        SPLN("Format: AIFF");
+        Serial.println("Format: AIFF");
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
         fileFmt = 3;
         dataFmt = 0;
+        bool isAIFC = fileHeader.riffType == cAIFC;
         bool COMMread = false;
         bool SSNDread = false;
 
@@ -489,25 +493,35 @@ bool AudioPlayWav::readHeader(int newState)
             wavfile.seek(position);
             rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
-            dataHeader.chunkSize = __rev(dataHeader.chunkSize);
-            //Serial.printf("ChunkSize:%x Chunk:%x\n",dataHeader.chunkSize, dataHeader.chunkID);
+            dataHeader.chunkSize = __rev(dataHeader.chunkSize);            
             if (rd < sizeof(dataHeader)) return false;
+            Serial.printf("Chunk:%c%c%c%c", (char)dataHeader.chunkID & 0xff, (char)(dataHeader.chunkID >> 8 & 0xff), (char)(dataHeader.chunkID  >> 16 & 0xff), (char)(dataHeader.chunkID >> 24 &0xff));
+            Serial.printf(" %x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
             if (!COMMread && dataHeader.chunkID == cCOMM) {
-                SPLN("COMM chunk");
+                Serial.print(":COMM ");
                 taiffCommonChunk commonChunk;
                 rd = read(&commonChunk, sizeof(commonChunk));
-                channels = __rev16(commonChunk.numChannels);
-                total_length = __rev(commonChunk.numSampleFrames);
-                bytes = __rev16 (commonChunk.sampleSize) / 8;
-                sample_rate = 0;
-                //Serial.printf("%d %d %d\n", (int)channels, (int)total_length, (int)bytes);
-                if (bytes == 0 || bytes > 2) return false;
+                if (rd < sizeof(commonChunk)) return false;
+
+                channels = __rev16(commonChunk.numChannels);                
+                commonChunk.sampleSize = __rev16 (commonChunk.sampleSize);
+                bytes = commonChunk.sampleSize / 8;
+                total_length = __rev(commonChunk.numSampleFrames) * channels * bytes;
+                
+                Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
+                if (total_length == 0) return false;
+                if (commonChunk.sampleSize != 8 && commonChunk.sampleSize != 16) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-                if (SSNDread) break;
+                
+                sample_rate = 0;
+               
                 COMMread = true;
+                if (SSNDread) break;
+                
+                Serial.println("OK");
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
-                SPLN("SSND chunk");
+                Serial.println(":SSND");
 
                 if (bytes == 2) {
                     dataFmt = 3;
@@ -515,10 +529,11 @@ bool AudioPlayWav::readHeader(int newState)
                     dataFmt = 1; //TODO: ulaw: Different header!!
                 }
 
-                if (COMMread) break;
                 SSNDread = true;
+                if (COMMread) break;
+                
             } ;
-
+            
             position += sizeof(dataHeader) + dataHeader.chunkSize ;
             if (position & 1) position++; //make position even
         } while(true);
@@ -528,7 +543,7 @@ bool AudioPlayWav::readHeader(int newState)
     }  // AIFF
 	else
 #endif
-        
+
     if ( fileHeader.id == cRIFF && fileHeader.riffType == cWAVE )
     {
         // ---------- WAV ----------------------------
@@ -577,6 +592,7 @@ bool AudioPlayWav::readHeader(int newState)
                 if (fmtHeader.wFormatTag == 7) {
                     if (bytes != 1) return false;
                     dataFmt = 2; //ulaw
+                    Serial.println("ULAW!");
                 }
                 fmtok = true;
             }
@@ -621,6 +637,7 @@ bool AudioPlayWav::readHeader(int newState)
                     case 1: decoder = &decode_8bit_signed;
                             break;
                     case 2: decoder = &decode_8bit_ulaw;
+                            //decoder = &decode_8bit;
                             break;
                 }
                 break;
@@ -706,8 +723,10 @@ void  AudioPlayWav::update(void)
 
 
     --data_length;
-	if (data_length <= 0) stop();
-
+	if (data_length <= 0) {
+        Serial.println("Stop: Data Length!");
+        stop();
+    }
 }
 
 

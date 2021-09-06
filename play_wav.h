@@ -339,8 +339,14 @@ private:
 	uint32_t channelmask = 0;           // dwChannelMask
 };
 
-#if 0 && !defined(KINETISL)
+#if !defined(KINETISL)
 class AudioRecordWav : public AudioBaseWav, public AudioStream
 {
+public:
+    AudioRecordWav(void): AudioStream(0, NULL) { begin(); }
+    ~AudioRecordWav(void) { end(); }
+private: 
+    void begin(void){};
+    void end(void){};
 };
 #endif // defined(KINETISL)
