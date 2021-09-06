@@ -417,6 +417,9 @@ typedef struct {
 
 
 //AIFF:
+// http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-1.3.pdf
+// http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-C.9.26.91.pdf
+
 /*
  00000000  46 4F 52 4D 00 01 6F 94 41 49 46 46 43 4F 4D 4D  FORM..o”AIFFCOMM
  00000010  00 00 00 12 00 02 00 00 5B C5 00 10 40 0B FA 00  ........[Å..@.ú.
@@ -437,7 +440,7 @@ typedef struct {
     short numChannels;
     unsigned long numSampleFrames;
     short sampleSize;
-    //uint8_t sampleRate[10]; //80 bit floating point... ingnore that!
+    //uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ingnore that!
 }  __attribute__ ((__packed__)) taiffCommonChunk;
 
 
@@ -461,17 +464,17 @@ bool AudioPlayWav::readHeader(int newState)
     startInt(irq);
     if (rd < sizeof(fileHeader)) return false;
 
-    last_err = APW_ERR_FORMAT;    
+    last_err = APW_ERR_FORMAT;
     position = sizeof(fileHeader);
 
     if ( fileHeader.id == cFORM && fileHeader.riffType == cAIFF)
     {
         // ---------- AIFF ----------------------------
         SPLN("Format: AIFF");
-        //unlike wav, the samples chunk (here "SSND") can everywhere in the file!
+        //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
         fileFmt = 3;
-        dataFmt = 3;
+        dataFmt = 0;
         bool COMMread = false;
         bool SSNDread = false;
 
@@ -499,6 +502,13 @@ bool AudioPlayWav::readHeader(int newState)
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
                 SPLN("SSND chunk");
+                
+                if (bytes == 2) {
+                    dataFmt = 3;
+                } else {
+                    dataFmt = 1; //TODO: ulaw: Different header!!
+                }
+
                 if (COMMread) break;
                 SSNDread = true;
             } ;
@@ -507,6 +517,7 @@ bool AudioPlayWav::readHeader(int newState)
             if (position & 1) position++; //make position even
         } while(true);
 
+        if (!SSNDread || !COMMread) return false;
 
     }  // AIFF
 	else
@@ -552,10 +563,10 @@ bool AudioPlayWav::readHeader(int newState)
                 channels = fmtHeader.wChannels;
                 if (bytes == 0 || bytes > 2) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-                if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;             
+                if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;
                 fmtok = true;
             }
-            else 
+            else
             if (dataHeader.chunkID == cDATA) {
                     total_length = dataHeader.chunkSize;
                     break;
@@ -563,10 +574,11 @@ bool AudioPlayWav::readHeader(int newState)
 
             position += sizeof(dataHeader) + dataHeader.chunkSize;
         } while(true);
-        
+
         if (fmtok != true) return false;
 
     }  //wav
+    else return false; //unknown format
 
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     data_length = total_length / (sz_frame * bytes);
