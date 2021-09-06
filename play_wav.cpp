@@ -185,10 +185,9 @@ bool AudioBaseWav::initWrite(File file)
 
 // 8 bit unsigned:
 __attribute__((hot)) static
-void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
     do {
@@ -197,33 +196,33 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
             queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return p - buffer;
 
 }
 
 
 // 8 bit signed:
 __attribute__((hot)) static
-void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+size_t decode_8bit_signed(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
     do {
         unsigned int chan = 0;
         do {
-            queue[chan]->data[i] = *p++;
+            queue[chan]->data[i] = (*p++) << 8;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return p - buffer;
 
 }
 
 // 8 bit ulaw:
 __attribute__((hot)) static
-void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    uint8_t *p = (uint8_t*)&buffer[buffer_rd];
 
     size_t i = 0;
     do {
@@ -232,16 +231,15 @@ void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[]
             queue[chan]->data[i] = ulaw_decode_table[*p++];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-
+    return (int8_t*)p - buffer;
 }
 
 // 16 bit:
 __attribute__((hot)) static
-void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
 
-    int16_t *p = (int16_t*) &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
     do {
         unsigned int chan = 0;
@@ -249,16 +247,15 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
             queue[chan]->data[i] = *p++;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-
+    return (int8_t*)p - buffer;
 }
 
 // 16 bit big endian:
 __attribute__((hot)) static
-void decode_16bit_bigendian(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
 
-    int16_t *p = (int16_t*) &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
     do {
         unsigned int chan = 0;
@@ -266,6 +263,7 @@ void decode_16bit_bigendian(int8_t buffer[], size_t *buffer_rd, audio_block_t *q
             queue[chan]->data[i] = __rev16(*p++);
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return (int8_t*)p - buffer;
 
 }
 
@@ -563,9 +561,9 @@ bool AudioPlayWav::readHeader(int newState)
                 channels = fmtHeader.wChannels;
                 if (bytes == 0 || bytes > 2) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-                if (fmtHeader.wFormatTag != 1 && 
+                if (fmtHeader.wFormatTag != 1 &&
                     fmtHeader.wFormatTag != 7 && //ulaw
-                    fmtHeader.wFormatTag != 65534) return false;   
+                    fmtHeader.wFormatTag != 65534) return false;
                 if (fmtHeader.wFormatTag == 7) {
                     if (bytes != 1) return false;
                     dataFmt = 2; //ulaw
@@ -659,11 +657,6 @@ void  AudioPlayWav::update(void)
     if ( state != APW_STATE_PLAY ) return;
 
     unsigned int chan;
-	int8_t* currentPos = getBuffer(); // buffer pointer: don't cache, could change in the future
-	size_t sz_mem = getBufferSize();
-
-	if (nullptr == currentPos)
-		return;
 
 	// allocate the audio blocks to transmit
     audio_block_t *queue[channels];
@@ -673,16 +666,23 @@ void  AudioPlayWav::update(void)
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
 			last_err = APW_ERR_NO_AUDIOBLOCKS;
-			SPLN("Waveplayer stopped: not enough AudioMemory().");
+			SPLN("Waveplayer stopped: Not enough AudioMemory().");
 			stop();
             return;
 		}
 	} while (++chan < channels);
 
+	int8_t* currentPos = getBuffer(); // buffer pointer: don't cache, could change in the future
+    //if (nullptr == currentPos) return; //This WILL NOT happen. IF it happens, let it crash for easier debug.
 
 	// copy the samples to the audio blocks:
-    decoder(currentPos, &buffer_rd, queue, channels);
-    if (buffer_rd >= sz_mem ) buffer_rd = 0;
+    buffer_rd = decoder(currentPos, buffer_rd, queue, channels);
+
+    size_t sz_mem = getBufferSize();
+    if (buffer_rd >= sz_mem ) {
+        buffer_rd = 0;
+        readLater();    // trigger buffer fill
+    }
 
 	// transmit them:
     chan = 0;
@@ -692,15 +692,9 @@ void  AudioPlayWav::update(void)
 		AudioStream::release(queue[chan]);
 	} while (++chan < channels);
 
-    //Serial.printf("%d\n",data_length);
+
     --data_length;
 	if (data_length <= 0) stop();
-
-	// trigger buffer fill if we just emptied it
-    if ( buffer_rd == 0)
-    {
-        readLater();
-    }
 
 }
 

@@ -69,6 +69,7 @@
 
 //#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
 
+#define CPULOAD_PLAYWAV // Can we remove this before first release?
 
 #if defined(KINETISL)
     const int _AudioPlayWav_MaxChannels = 2;
@@ -131,7 +132,7 @@ protected:
     inline void seek(size_t pos) { wavfile.seek(pos); }//!< seek to new file position
 
 	// Simple functions we can define immediately:
-	void readLater(void) //!< from interrupt: request to re-fill the buffer
+	inline void readLater(void) //!< from interrupt: request to re-fill the buffer
 		{
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
@@ -140,7 +141,7 @@ protected:
 
 		}
 
-	void writeLater(void) //!< from interrupt: request to write the buffer to filesystem
+	inline void writeLater(void) //!< from interrupt: request to write the buffer to filesystem
 		{
 			if (eventReadingEnabled)
 				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
@@ -166,15 +167,19 @@ protected:
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
             #endif
+            #if defined (CPULOAD_PLAYWAV)
 			uint32_t tmp = ARM_DWT_CYCCNT;
+            #endif
 			size_t result = wavfile.read(buf,len);
 
 			if ( result < len )
 				memset((int8_t*) buf+result, padding , len - result);
 			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
 
+            #if defined (CPULOAD_PLAYWAV)
 			// % CPU load per track per update cycle: assumes 8-bit samples
 			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
+            #endif
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
@@ -187,13 +192,17 @@ protected:
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
             #endif
+            #if defined (CPULOAD_PLAYWAV)
 			uint32_t tmp = ARM_DWT_CYCCNT;
+            #endif
 			size_t result = wavfile.write(buf,len);
 
 			SPTF("Wrote %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
 
-			// % CPU load per track per update cycle: assumes 8-bit samples
+			#if defined (CPULOAD_PLAYWAV)
+            // % CPU load per track per update cycle: assumes 8-bit samples
 			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
+            #endif
             #if defined (DEBUG_PIN_PLAYWAV)
                 digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
             #endif
@@ -294,7 +303,7 @@ private:
     void begin(void);
 	void end(void);
 	bool readHeader(int newState);
-    void (*decoder)(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels);
+    size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
