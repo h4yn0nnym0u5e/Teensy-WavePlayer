@@ -338,7 +338,7 @@ bool AudioPlayWav::play(File file, const bool paused)
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader(APW_NONE, 0,  paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(APW_NONE, 0, 0,  paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -357,14 +357,14 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     return play(file, paused);
 }
 
-bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint8_t number_of_channels, bool paused)
+bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused)
 {
     stop();
 
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader(fmt, 0, paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(fmt, sampleRate, number_of_channels, paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -372,7 +372,7 @@ bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint8_t number_of_channels
     return true;
 }
 
-bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint8_t number_of_channels, bool paused)
+bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused)
 {
     stop();
     startUsingSPI();
@@ -380,7 +380,7 @@ bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint8_t number_
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
-    return playRaw(file, fmt, number_of_channels, paused);
+    return playRaw(file, fmt, sampleRate, number_of_channels, paused);
 }
 
 void AudioPlayWav::stop(void)
@@ -508,33 +508,56 @@ typedef struct {
 }  __attribute__ ((__packed__)) taifcCommonChunk;
 
 
-bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int newState)
+bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState)
 {
-    size_t sz_frame, position, rd;
+    size_t sz_frame, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
     bool irq;
 
+    sample_rate = sampleRate;
     channels = number_of_channels;
     dataFmt = fmt;
 
     buffer_rd = total_length = data_length = fileFmt = 0;
-    channelmask = sample_rate = channels = bytes = 0;
+    channelmask = channels = bytes = 0;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
 
-    if ( dataFmt != APW_NONE) {
-        irq = stopInt();
+    irq = stopInt();
+    seek(0);
+
+    if ( dataFmt == APW_NONE) {
         rd = read(&fileHeader, sizeof(fileHeader));
-        startInt(irq);
-        if (rd < sizeof(fileHeader)) return false;
+        if (rd < sizeof(fileHeader)) { startInt(irq); return; }
+    } else {
+         //just check if the file is readable:
+        rd = read(&fileHeader, 1);
+        if (rd < 1) { startInt(irq); return; }
+        seek(0);
     }
+    startInt(irq);
 
     last_err = APW_ERR_FORMAT;
-
     if ( dataFmt != APW_NONE) {
         // ---------- RAW ----------------------------
+        total_length = wavfile.size();
+        if (total_length == 0) return false;
+        switch (dataFmt)
+        {
+            case APW_NONE: //to prevent a GCC warning..
+                break;
+            case APW_8BIT_UNSIGNED:
+            case APW_8BIT_SIGNED:
+            case APW_ULAW:
+                bytes = 1;
+                break;
+            case APW_16BIT_SIGNED:
+            case APW_16BIT_SIGNED_BIGENDIAN:
+                bytes = 2;
+                break;
+        }
     }
     else
 #if !defined(KINETISL)
@@ -542,14 +565,13 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
        (fileHeader.riffType == cAIFF || fileHeader.riffType == cAIFC))
     {
         // ---------- AIFF ----------------------------
-        //Serial.println("Format: AIFF");
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
-        position = sizeof(fileHeader);
+        size_t position = sizeof(fileHeader);
         fileFmt = 3;
 
         bool isAIFC = fileHeader.riffType == cAIFC;
-        //if ( isAIFC ) Serial.println("AIFC");
+        //if ( isAIFC ) Serial.println("AIFC"); else Serial.println("AIFF");
         bool COMMread = false;
         bool SSNDread = false;
 
@@ -576,14 +598,14 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
                 //Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
                 if (total_length == 0) return false;
                 if (commonChunk.sampleSize != 8 && commonChunk.sampleSize != 16) return false;
-                if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
 
                 //if (isAIFC) Serial.printf("Compression:%c%c%c%c 0x%x\n", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff), commonChunk.compressionType);
 
                 if (bytes == 2) {
                      if (isAIFC) return false;
                     dataFmt = APW_16BIT_SIGNED; //16 Bit signed
-                } else {
+                } else
+                if (bytes == 1){
 
                     if (isAIFC) {
                         switch(commonChunk.compressionType)
@@ -596,14 +618,13 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
                         }
                     } else
                     dataFmt = APW_8BIT_SIGNED;
-                }
+                } else return false;
 
-                sample_rate = 0;
                 COMMread = true;
                 if (SSNDread) break;
 
             } else if (dataHeader.chunkID == cSSND) {
-                //todo offset etc...
+                //todo: offset etc...
 
                 //Serial.println(":SSND");
                 SSNDread = true;
@@ -624,8 +645,8 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
          fileHeader.riffType == cWAVE )
     {
         // ---------- WAV ----------------------------
-        SPLN("Format: WAV");
-        position = sizeof(fileHeader);
+        //Serial.println("Format: WAV");
+        size_t position = sizeof(fileHeader);
         bool fmtok = false;
 
         do {
@@ -660,10 +681,10 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
                 startInt(irq);
 
                 //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
+                if (fmtHeader.dwSamplesPerSec == 0) return false;
                 sample_rate = fmtHeader.dwSamplesPerSec;
                 channels = fmtHeader.wChannels;
                 if (bytes == 0 || bytes > 2) return false;
-                if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
                 if (fmtHeader.wFormatTag != 1 &&
                     fmtHeader.wFormatTag != 7 && //ulaw
                     fmtHeader.wFormatTag != 65534) return false;
@@ -686,7 +707,11 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int ne
         if (fmtok != true) return false;
 
     }  //wav
-    else return false; //unknown format
+    else
+        return false; //unknown format
+
+    if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
+    if (sample_rate == 0) sample_rate = AUDIO_SAMPLE_RATE_EXACT;
 
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     data_length = total_length / (sz_frame * bytes);
@@ -809,7 +834,7 @@ void  AudioPlayWav::update(void)
 
     --data_length;
 	if (data_length <= 0) {
-        //Serial.println("Stop: Data Length!");
+        SPLN("Stop: No Data anymore.");
         stop();
     }
 }

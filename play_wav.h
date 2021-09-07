@@ -327,8 +327,8 @@ public:
 	bool play(File file, bool paused = false);
 	bool play(const char *filename, bool paused = false); // optional start in paused state
 
-    bool playRaw(File file, APW_FORMAT fmt, uint8_t number_of_channels, bool paused = false);
-    bool playRaw(const char *filename, APW_FORMAT fmt, uint8_t number_of_channels, bool paused = false);
+    bool playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused = false);
+    bool playRaw(const char *filename, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused = false);
 
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void) {togglePause();};
@@ -342,7 +342,7 @@ public:
 private:
     void begin(void);
 	void end(void);
-    bool readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int newState );
+    bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState );
     size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
