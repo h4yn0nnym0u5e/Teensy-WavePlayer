@@ -306,7 +306,6 @@ private:
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
     APW_FORMAT dataFmt;
-    uint8_t fileFmt = 0;                // file format (0 = *.wav, 3= *.aif, more to come)
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)

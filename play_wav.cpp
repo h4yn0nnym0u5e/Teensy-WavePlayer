@@ -519,7 +519,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     channels = number_of_channels;
     dataFmt = fmt;
 
-    buffer_rd = total_length = data_length = fileFmt = 0;
+    buffer_rd = total_length = data_length = 0;
     channelmask = channels = bytes = 0;
 
     last_err = APW_ERR_FILE;
@@ -530,11 +530,11 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
     if ( dataFmt == APW_NONE) {
         rd = read(&fileHeader, sizeof(fileHeader));
-        if (rd < sizeof(fileHeader)) { startInt(irq); return; }
+        if (rd < sizeof(fileHeader)) { startInt(irq); return false; }
     } else {
          //just check if the file is readable:
         rd = read(&fileHeader, 1);
-        if (rd < 1) { startInt(irq); return; }
+        if (rd < 1) { startInt(irq); return false; }
         seek(0);
     }
     startInt(irq);
@@ -568,7 +568,6 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
         size_t position = sizeof(fileHeader);
-        fileFmt = 3;
 
         bool isAIFC = fileHeader.riffType == cAIFC;
         //if ( isAIFC ) Serial.println("AIFC"); else Serial.println("AIFF");
@@ -602,11 +601,10 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
                 //if (isAIFC) Serial.printf("Compression:%c%c%c%c 0x%x\n", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff), commonChunk.compressionType);
 
                 if (bytes == 2) {
-                     if (isAIFC) return false;
+                    if (isAIFC) return false;
                     dataFmt = APW_16BIT_SIGNED; //16 Bit signed
                 } else
                 if (bytes == 1){
-
                     if (isAIFC) {
                         switch(commonChunk.compressionType)
                         {
@@ -614,7 +612,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
                                         break;
                             case craw:  dataFmt = APW_8BIT_UNSIGNED;
                                         break;
-                            default: return false;
+                            default:    return false;
                         }
                     } else
                     dataFmt = APW_8BIT_SIGNED;
