@@ -135,9 +135,17 @@ void AudioBaseWav::startUsingSPI(void)
 //this must be smarter.
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
-   if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
+    if (!usingSPI && !(SIM_SCGC3 & SIM_SCGC3_SDHC))
+    {
+        AudioStartUsingSPI();
+        usingSPI = true;
+    }
 #else
-    AudioStartUsingSPI();
+    if (!usingSPI)
+    {
+        AudioStartUsingSPI();
+        usingSPI = true;
+    }
 #endif // defined(HAS_KINETIS_SDHC)
 #endif //defined(HANDLE_SPI)
 }
@@ -146,9 +154,17 @@ void AudioBaseWav::stopUsingSPI(void)
 { //TODO...
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
-    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
+    if (usingSPI && !(SIM_SCGC3 & SIM_SCGC3_SDHC)
+    {
+        AudioStopUsingSPI();
+        usingSPI = false;
+    }
 #else
-    AudioStopUsingSPI();
+    if (usingSPI)
+    {
+        AudioStopUsingSPI();
+        usingSPI = false;
+    }
 #endif // defined(HAS_KINETIS_SDHC)
 #endif //defined(HANDLE_SPI)
 }
@@ -181,6 +197,14 @@ bool AudioBaseWav::initWrite(File file)
 	return true;
 }
 
+bool AudioBaseWav::addMemory(__attribute__ ((unused)) size_t mult)
+{
+#if !defined(KINETISL)
+    if (mult < 1) mult = 1;
+	_sz_mem_additional = mult;
+#endif // !defined(KINETISL)
+	return true;
+}
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -311,7 +335,6 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
 //- play float formats?
 
 //----------------------------------------------------------------------------------------------------
-FLASHMEM
 void AudioPlayWav::begin(void)
 {
     state = APW_STATE_STOP;
@@ -321,8 +344,6 @@ void AudioPlayWav::begin(void)
 #endif // !defined(KINETISL)
 }
 
-
-FLASHMEM
 void AudioPlayWav::end(void)
 {
 	stop();
@@ -394,7 +415,6 @@ void AudioPlayWav::stop(void)
 
     stopUsingSPI();
 }
-
 
 //WAV:
 /*
@@ -838,17 +858,6 @@ void  AudioPlayWav::update(void)
     }
 }
 
-
-bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
-{
-#if !defined(KINETISL)
-    if (mult < 1) mult = 1;
-	_sz_mem_additional = mult;
-#endif // !defined(KINETISL)
-	return true;
-}
-
-
 #define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
 
 #if !defined(KINETISL)
@@ -892,6 +901,30 @@ uint32_t AudioPlayWav::positionMillis(void)
     ret = _positionMillis();
     startInt(irq);
     return ret;
+}
+
+#endif // !defined(KINETISL)
+
+//----------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------
+#if !defined(KINETISL)
+
+void AudioRecordWav::begin(void)
+{
+    state = APW_STATE_STOP;
+    my_instance = _AudioRecordWavInstances;
+    ++_AudioRecordWavInstances;
+}
+
+void AudioRecordWav::end(void)
+{
+	stop();
+    --_AudioRecordWavInstances;
+}
+
+void AudioRecordWav::stop(void)
+{
 }
 
 #endif // !defined(KINETISL)

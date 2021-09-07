@@ -112,6 +112,7 @@ class AudioBaseWav
 {
 public:
 	void pause(bool pause);
+    void togglePause(void);
 	bool isPaused(void) {return (state == APW_STATE_PAUSED);};
 	bool isStopped(void) {return (state == APW_STATE_STOP);};
 	inline size_t getBufferSize() { return sz_mem; } //!< return size of buffer
@@ -127,6 +128,7 @@ public:
 	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
     #endif
 
+    bool addMemory(size_t mult);
 	size_t memUsed(void) {return getBufferSize();};
 	uint32_t filePos(void);
 	uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
@@ -284,11 +286,9 @@ private:
     #endif
 
 	//--------------------------------------------------------------------------------------------------
-
 	bool initRead(File file);
 	bool initWrite(File file);
     bool isRunning(void);
-    void togglePause(void);
 	void startUsingSPI(void);
 	void stopUsingSPI(void);
     bool stopInt(void);
@@ -307,6 +307,7 @@ private:
     size_t total_length = 0;			// number of audio data bytes in file
     APW_FORMAT dataFmt;
 	uint8_t my_instance;                // instance id
+    bool usingSPI = false;
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
     uint8_t last_err = APW_ERR_OK;
@@ -329,16 +330,17 @@ public:
     bool playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused = false);
     bool playRaw(const char *filename, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused = false);
 
-	static bool addMemoryForRead(size_t mult); // add memory
+    bool addMemoryForRead(size_t mult){return addMemory(mult);}; // add memory
 	void togglePlayPause(void) {togglePause();};
     bool isPlaying(void) {return isRunning();};
 	uint32_t positionMillis(void);
 	uint32_t channelMask(void) {return channelmask;};
-	virtual void update(void);
+
     #if USE_EVENTRESPONDER_PLAYWAV
 	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
     #endif
 private:
+    virtual void update(void);
     void begin(void);
 	void end(void);
     bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState );
@@ -356,8 +358,26 @@ class AudioRecordWav : public AudioBaseWav, public AudioStream
 public:
     AudioRecordWav(void): AudioStream(0, NULL) { begin(); }
     ~AudioRecordWav(void) { end(); }
+    void stop(void);
+
+    bool record(File file);
+    bool record(const char *filename);
+
+    bool writeHeader(File file); //updates header of a file
+    bool writeHeader(const char *filename);
+    bool writeHeader(void) {return writeHeader(wavfile);}; //updates header of current file
+
+    bool isRecording(void) {return isRunning();};
+    void togglePlayPause(void) {togglePause();};
+    bool addMemoryForWrite(size_t mult){return addMemory(mult);}; // add memory
+
+    #if USE_EVENTRESPONDER_PLAYWAV
+	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
+    #endif
+
 private:
-    void begin(void){};
-    void end(void){};
+    virtual void update(void);
+    void begin(void);
+    void end(void);
 };
 #endif // defined(KINETISL)
