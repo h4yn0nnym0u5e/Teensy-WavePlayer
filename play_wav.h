@@ -155,7 +155,8 @@ private:
     ~AudioBaseWav(void){ close(); }
 
     inline void setPadding(uint8_t b) { padding = b; }
-    inline void seek(size_t pos) { wavfile.seek(pos); }//!< seek to new file position
+    inline bool seek(size_t pos) { return wavfile.seek(pos); }//!< seek to new file position
+    inline size_t size() { return wavfile.size(); }//!< return file position
 	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
 
 	inline void readLater(void) //!< from interrupt: request to re-fill the buffer
@@ -191,7 +192,7 @@ private:
             buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
             #else
             buf_unaligned = malloc(sz_mem);
-            buffer = (int8_t*) buffer;
+            buffer = (int8_t*) buf_unaligned;
             #endif
 			SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
 			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;

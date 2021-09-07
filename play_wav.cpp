@@ -129,6 +129,15 @@ uint32_t AudioBaseWav::filePos(void)
 	return result;
 }
 
+bool AudioBaseWav::addMemory(__attribute__ ((unused)) size_t mult)
+{
+#if !defined(KINETISL)
+    if (mult < 1) mult = 1;
+	_sz_mem_additional = mult;
+#endif // !defined(KINETISL)
+	return true;
+}
+
 void AudioBaseWav::startUsingSPI(void)
 {
 //TODO... https://forum.pjrc.com/threads/67989-Teensyduino-1-55-Beta-1?p=287023&viewfull=1#post287023
@@ -197,14 +206,6 @@ bool AudioBaseWav::initWrite(File file)
 	return true;
 }
 
-bool AudioBaseWav::addMemory(__attribute__ ((unused)) size_t mult)
-{
-#if !defined(KINETISL)
-    if (mult < 1) mult = 1;
-	_sz_mem_additional = mult;
-#endif // !defined(KINETISL)
-	return true;
-}
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -563,7 +564,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     if ( dataFmt != APW_NONE) {
         // ---------- RAW ----------------------------
         //Serial.println("Format: RAW");
-        total_length = wavfile.size();
+        total_length = size();
         if (total_length == 0) return false;
         switch (dataFmt)
         {
@@ -597,7 +598,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
         do {
             irq = stopInt();
-            seek(position);
+            if (!seek(position)) return false;
             rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
             dataHeader.chunkSize = __rev(dataHeader.chunkSize);
