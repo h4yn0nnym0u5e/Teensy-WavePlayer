@@ -156,6 +156,7 @@ private:
 
     inline void setPadding(uint8_t b) { padding = b; }
     inline bool seek(size_t pos) { return wavfile.seek(pos); }//!< seek to new file position
+    inline void flush(void) { wavfile.flush(); }
     inline size_t size() { return wavfile.size(); }//!< return file position
 	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
 

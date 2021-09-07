@@ -928,4 +928,65 @@ void AudioRecordWav::stop(void)
 {
 }
 
+typedef struct
+{
+    tFileHeader fileHeader;
+    struct {
+        tDataHeader dataHeader;
+        tFmtHeaderEx fmtHeader;
+    } file;
+    tDataHeader dataHeader;
+
+} __attribute__ ((__packed__)) tWaveFileHeader;
+
+bool AudioRecordWav::writeHeader(File file)
+{
+
+    if (state == APW_STATE_RECORD) return false;
+
+    bool result, ok, irq;
+    size_t pos, sz, wr;
+
+    irq = stopInt();
+    pos = position();
+    flush();
+    ok = seek(0);
+    startInt(irq);
+    if (!ok) return false;
+
+    sz = size();
+    if (sz == 0) sz = sizeof(tWaveFileHeader);
+
+    tWaveFileHeader header;
+
+    header.fileHeader.id = cRIFF;
+    header.fileHeader.len = sz - sizeof(tDataHeader);
+    header.fileHeader.riffType = cWAVE;
+    header.file.dataHeader.chunkID = cFMT;
+    header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
+
+    if (channels <= 2) // TODO: u-law (fomatTag = 7)
+        header.file.fmtHeader.wFormatTag = 1;
+    else
+        header.file.fmtHeader.wFormatTag = 65534;
+
+    header.file.fmtHeader.wChannels = channels;
+    header.file.fmtHeader.dwSamplesPerSec = sample_rate;
+    header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
+    header.file.fmtHeader.wBlockAlign = 0;
+    header.file.fmtHeader.wBitsPerSample = bytes * 8;
+    header.file.fmtHeader.cbSize = 0;
+
+    header.dataHeader.chunkID = cDATA;
+    header.dataHeader.chunkSize = sz - sizeof(tWaveFileHeader);
+
+    irq = stopInt();
+    wr = write(&header, sizeof(header));
+    ok = seek(pos);
+    startInt(irq);
+    if (!ok || wr < sizeof(header)) return false;
+
+    return true;
+}
+
 #endif // !defined(KINETISL)
