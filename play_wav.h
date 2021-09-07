@@ -40,17 +40,24 @@
 #include <Arduino.h>
 #include <AudioStream.h>
 #include <SD.h>
-#include <EventResponder.h>
+
 
 
 #define ENABLE_EVENTRESPONDER_PLAYWAV //comment to reduce codesize, TensyLC: always disabled.
 
+
+enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
+                  APW_16BIT_SIGNED, APW_16BIT_SIGNED_BIGENDIAN};
 
 #define APW_ERR_OK              0 // no Error
 #define APW_ERR_FORMAT          1 // not supported Format
 #define APW_ERR_FILE   			2 // File not readable (does it exist?)
 #define APW_ERR_OUT_OF_MEMORY   3 // Not enough dynamic memory available
 #define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audio blocks
+
+
+
+/*********************************************************************************************************/
 
 #define APW_STATE_STOP    0
 #define APW_STATE_PAUSED  1
@@ -84,9 +91,10 @@
 
 #endif//defined(KINETISL)
 
-//TODO:
+
 #ifdef USE_EVENTRESPONDER_PLAYWAV
-#define CPULOAD_PLAYWAV // Can we remove this before first release?
+#include <EventResponder.h>
+#define CPULOAD_PLAYWAV // TODO: Can we remove this before first release?
 #endif
 
 /*********************************************************************************************************/
@@ -245,14 +253,14 @@ protected:
 				free(buf_unaligned);
 				buf_unaligned = buffer = nullptr;
 			}
-            
+
             #if USE_EVENTRESPONDER_PLAYWAV
 			evResp.clearEvent(); // not intuitive, but works SO much better...
             #endif
-            
+
 			startInt(irq);
 		}
-        
+
     #if USE_EVENTRESPONDER_PLAYWAV
 	static void evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
 	{
@@ -270,7 +278,7 @@ protected:
 		thisWM.write(thisWM.buffer,thisWM.sz_mem);
 	}
     #endif
-    
+
 	//--------------------------------------------------------------------------------------------------
 
 	bool initRead(File file);
@@ -286,8 +294,8 @@ protected:
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
+    APW_FORMAT dataFmt;
     uint8_t fileFmt = 0;                // file format (0 = *.wav, 3= *.aif, more to come)
-    uint8_t dataFmt = 0;                // data format (0 = std, 1 = 8 bit signed, 2 = ulaw, 3=16bit big endian)
 	uint8_t my_instance;                // instance id
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
@@ -297,12 +305,12 @@ private:
     size_t sz_mem;					    //!< size of buffer
     void* buf_unaligned;                // the malloc'd buffer
     int8_t* buffer;					    //!< buffer to store pre-loaded WAV data going to or from SD card
-    
+
     #if USE_EVENTRESPONDER_PLAYWAV
 	EventResponder evResp; 			    //!< executes data transfer in foreground
     static bool eventReadingEnabled;    //!< true to read filesystem via EventResponder; otherwise inside update() as usual
     #endif
-    
+
 	uint8_t padding;				    //!< value to pad buffer at EOF
 
 };
@@ -345,7 +353,7 @@ class AudioRecordWav : public AudioBaseWav, public AudioStream
 public:
     AudioRecordWav(void): AudioStream(0, NULL) { begin(); }
     ~AudioRecordWav(void) { end(); }
-private: 
+private:
     void begin(void){};
     void end(void){};
 };

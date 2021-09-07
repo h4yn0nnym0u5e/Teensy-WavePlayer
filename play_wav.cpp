@@ -497,9 +497,9 @@ bool AudioPlayWav::readHeader(int newState)
     tDataHeader dataHeader;
     bool irq;
 
-    buffer_rd = total_length = data_length = 0;
+    buffer_rd = total_length = data_length = fileFmt = 0;
     channelmask = sample_rate = channels = bytes = 0;
-    dataFmt = fileFmt = 0;
+    dataFmt = APW_8BIT_UNSIGNED;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
@@ -522,7 +522,7 @@ bool AudioPlayWav::readHeader(int newState)
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
         fileFmt = 3;
-        dataFmt = 0;
+
         bool isAIFC = fileHeader.riffType == cAIFC;
         //if ( isAIFC ) Serial.println("AIFC");
         bool COMMread = false;
@@ -557,29 +557,29 @@ bool AudioPlayWav::readHeader(int newState)
 
                 if (bytes == 2) {
                      if (isAIFC) return false;
-                    dataFmt = 3; //16 Bit signed
+                    dataFmt = APW_16BIT_SIGNED; //16 Bit signed
                 } else {
 
                     if (isAIFC) {
                         switch(commonChunk.compressionType)
                         {
-                            case culaw: dataFmt = 2; //ulaw
+                            case culaw: dataFmt = APW_ULAW;
                                         break;
-                            case craw:  dataFmt = 0; //8 Bit unsigned
+                            case craw:  dataFmt = APW_8BIT_UNSIGNED;
                                         break;
                             default: return false;
                         }
                     } else
-                    dataFmt = 1;//8 Bit signed
+                    dataFmt = APW_8BIT_SIGNED;
                 }
-                
+
                 sample_rate = 0;
                 COMMread = true;
                 if (SSNDread) break;
 
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
-                
+
                 //Serial.println(":SSND");
                 SSNDread = true;
                 if (COMMread) break;
@@ -642,7 +642,7 @@ bool AudioPlayWav::readHeader(int newState)
                     fmtHeader.wFormatTag != 65534) return false;
                 if (fmtHeader.wFormatTag == 7) {
                     if (bytes != 1) return false;
-                    dataFmt = 2; //ulaw
+                    dataFmt = APW_ULAW; //ulaw
                     //Serial.println("ULAW!");
                 }
                 fmtok = true;
@@ -681,24 +681,31 @@ bool AudioPlayWav::readHeader(int newState)
     setPadding(0);
 
     switch(bytes) {
+        default:
         case 1: switch (dataFmt) {
-                    case 0: decoder = &decode_8bit;
+                    default:
+                    case APW_8BIT_UNSIGNED:
+                            decoder = &decode_8bit;
                             setPadding(128);
                             break;
-                    case 1: decoder = &decode_8bit_signed;
+                    case APW_8BIT_SIGNED:
+                            decoder = &decode_8bit_signed;
                             break;
-                    case 2: decoder = &decode_8bit_ulaw;
-                            //decoder = &decode_8bit;
+                    case APW_ULAW:
+                            decoder = &decode_8bit_ulaw;
                             break;
                 }
                 break;
 
         case 2: switch (dataFmt) {
-                    case 0 : decoder = &decode_16bit;
-                             break;
+                    default:
+                    case APW_16BIT_SIGNED:
+                            decoder = &decode_16bit;
+                            break;
                     #if !defined(KINETISL)
-                    case 3 : decoder = &decode_16bit_bigendian;
-                             break;
+                    case APW_16BIT_SIGNED_BIGENDIAN:
+                            decoder = &decode_16bit_bigendian;
+                            break;
                     #endif
                 }
                 break;
