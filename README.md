@@ -17,9 +17,10 @@ Extended version
 - n channel u-law *.wav
 - n channel 16 bit signed *.wav
 - n channel 8 bit signed *.aiff
+- n channel 8 bit unsigned *.aifc
 - n channel u-law *.aifc (Apple, non ccitt)
 - n channel 16 bit signed *.aiff
-- Formats under development: aif 8 bit unsigned, raw
+- Formats under development: raw
 
 
 

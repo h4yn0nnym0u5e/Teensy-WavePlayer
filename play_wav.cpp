@@ -252,7 +252,7 @@ const static short ulaw_decode[256] = {
        244,    228,    212,    196,    180,    164,    148,    132,
        120,    112,    104,     96,     88,     80,     72,     64,
 	    56,     48,     40,     32,     24,     16,      8,      0 };
-    
+
 // 8 bit ulaw:
 __attribute__((hot)) static
 size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
@@ -472,6 +472,7 @@ static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
 static const uint32_t cSSND = 0x444e5353; //'SSND'
 //static const uint32_t cULAW = 0x57414C55; //'ULAW' // not supported
 static const uint32_t culaw = 0x77616c75; //'ulaw'
+static const uint32_t craw =  0x20776172; //'raw '
 
 typedef struct {
     short numChannels;
@@ -523,6 +524,7 @@ bool AudioPlayWav::readHeader(int newState)
         fileFmt = 3;
         dataFmt = 0;
         bool isAIFC = fileHeader.riffType == cAIFC;
+        //if ( isAIFC ) Serial.println("AIFC");
         bool COMMread = false;
         bool SSNDread = false;
 
@@ -531,49 +533,58 @@ bool AudioPlayWav::readHeader(int newState)
             wavfile.seek(position);
             rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
-            dataHeader.chunkSize = __rev(dataHeader.chunkSize);            
+            dataHeader.chunkSize = __rev(dataHeader.chunkSize);
             if (rd < sizeof(dataHeader)) return false;
             //Serial.printf("Chunk:%c%c%c%c", (char)dataHeader.chunkID & 0xff, (char)(dataHeader.chunkID >> 8 & 0xff), (char)(dataHeader.chunkID  >> 16 & 0xff), (char)(dataHeader.chunkID >> 24 &0xff));
-            //Serial.printf(" %x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
+            //Serial.printf(" 0x%x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
             if (!COMMread && dataHeader.chunkID == cCOMM) {
                 //Serial.print(":COMM ");
-                taifcCommonChunk commonChunk;                
+                taifcCommonChunk commonChunk;
                 rd = read(&commonChunk, sizeof(commonChunk));
                 if (rd < sizeof(commonChunk)) return false;
 
-                channels = __rev16(commonChunk.numChannels);                
+                channels = __rev16(commonChunk.numChannels);
                 commonChunk.sampleSize = __rev16 (commonChunk.sampleSize);
                 bytes = commonChunk.sampleSize / 8;
                 total_length = __rev(commonChunk.numSampleFrames) * channels * bytes;
-                
+
                 //Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
                 if (total_length == 0) return false;
                 if (commonChunk.sampleSize != 8 && commonChunk.sampleSize != 16) return false;
                 if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-                
+
+                //if (isAIFC) Serial.printf("Compression:%c%c%c%c 0x%x\n", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff), commonChunk.compressionType);
+
                 if (bytes == 2) {
-                    dataFmt = 3;
+                     if (isAIFC) return false;
+                    dataFmt = 3; //16 Bit signed
                 } else {
-                    dataFmt = 1; //8 Bit signed
-                    //Serial.printf("compression%c%c%c%c", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff));
-                    if (isAIFC && (/*commonChunk.compressionType == cULAW ||*/ commonChunk.compressionType == culaw)) {
-                        //Serial.println("ulaw");
-                        dataFmt = 2; //ulaw
-                    }
+
+                    if (isAIFC) {
+                        switch(commonChunk.compressionType)
+                        {
+                            case culaw: dataFmt = 2; //ulaw
+                                        break;
+                            case craw:  dataFmt = 0; //8 Bit unsigned
+                                        break;
+                            default: return false;
+                        }
+                    } else
+                    dataFmt = 1;//8 Bit signed
                 }
                 
                 sample_rate = 0;
-               
                 COMMread = true;
                 if (SSNDread) break;
-                
+
             } else if (dataHeader.chunkID == cSSND) {
                 //todo offset etc...
+                
                 //Serial.println(":SSND");
                 SSNDread = true;
-                if (COMMread) break;                
+                if (COMMread) break;
             } ;
-            
+
             position += sizeof(dataHeader) + dataHeader.chunkSize ;
             if (position & 1) position++; //make position even
         } while(true);
