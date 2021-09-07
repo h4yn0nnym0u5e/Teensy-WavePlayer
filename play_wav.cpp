@@ -338,7 +338,7 @@ bool AudioPlayWav::play(File file, const bool paused)
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader( paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(APW_NONE, 0,  paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -354,9 +354,17 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
-	initRead(file);
+    return play(file, paused);
+}
 
-    if (!readHeader(paused ? APW_STATE_PAUSED : APW_STATE_PLAY))
+bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint8_t number_of_channels, bool paused)
+{
+    stop();
+
+    initRead(file);
+    startUsingSPI();
+
+    if (!readHeader(fmt, 0, paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -364,6 +372,16 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     return true;
 }
 
+bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint8_t number_of_channels, bool paused)
+{
+    stop();
+    startUsingSPI();
+
+    bool irq = stopInt();
+    File file = SD.open(filename);
+    startInt(irq);
+    return playRaw(file, fmt, number_of_channels, paused);
+}
 
 void AudioPlayWav::stop(void)
 {
@@ -490,29 +508,35 @@ typedef struct {
 }  __attribute__ ((__packed__)) taifcCommonChunk;
 
 
-bool AudioPlayWav::readHeader(int newState)
+bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int newState)
 {
     size_t sz_frame, position, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
     bool irq;
 
+    channels = number_of_channels;
+    dataFmt = fmt;
+
     buffer_rd = total_length = data_length = fileFmt = 0;
     channelmask = sample_rate = channels = bytes = 0;
-    dataFmt = APW_8BIT_UNSIGNED;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
 
-
-    irq = stopInt();
-    rd = read(&fileHeader, sizeof(fileHeader));
-    startInt(irq);
-    if (rd < sizeof(fileHeader)) return false;
+    if ( dataFmt != APW_NONE) {
+        irq = stopInt();
+        rd = read(&fileHeader, sizeof(fileHeader));
+        startInt(irq);
+        if (rd < sizeof(fileHeader)) return false;
+    }
 
     last_err = APW_ERR_FORMAT;
-    position = sizeof(fileHeader);
 
+    if ( dataFmt != APW_NONE) {
+        // ---------- RAW ----------------------------
+    }
+    else
 #if !defined(KINETISL)
     if (fileHeader.id == cFORM &&
        (fileHeader.riffType == cAIFF || fileHeader.riffType == cAIFC))
@@ -521,6 +545,7 @@ bool AudioPlayWav::readHeader(int newState)
         //Serial.println("Format: AIFF");
         //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
         //unfortunately, it is big endian :-(
+        position = sizeof(fileHeader);
         fileFmt = 3;
 
         bool isAIFC = fileHeader.riffType == cAIFC;
@@ -595,10 +620,12 @@ bool AudioPlayWav::readHeader(int newState)
 	else
 #endif
 
-    if ( fileHeader.id == cRIFF && fileHeader.riffType == cWAVE )
+    if ( fileHeader.id == cRIFF &&
+         fileHeader.riffType == cWAVE )
     {
         // ---------- WAV ----------------------------
         SPLN("Format: WAV");
+        position = sizeof(fileHeader);
         bool fmtok = false;
 
         do {
@@ -782,7 +809,7 @@ void  AudioPlayWav::update(void)
 
     --data_length;
 	if (data_length <= 0) {
-        Serial.println("Stop: Data Length!");
+        //Serial.println("Stop: Data Length!");
         stop();
     }
 }

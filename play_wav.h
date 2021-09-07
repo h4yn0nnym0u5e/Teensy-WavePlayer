@@ -44,7 +44,8 @@
 #define ENABLE_EVENTRESPONDER_PLAYWAV //comment to reduce codesize, TensyLC: always disabled.
 
 enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
-                  APW_16BIT_SIGNED, APW_16BIT_SIGNED_BIGENDIAN};
+                  APW_16BIT_SIGNED, APW_16BIT_SIGNED_BIGENDIAN,
+                  APW_NONE};
 
 #define APW_ERR_OK              0 // no Error
 #define APW_ERR_FORMAT          1 // not supported Format
@@ -153,8 +154,8 @@ private:
 
     inline void setPadding(uint8_t b) { padding = b; }
     inline void seek(size_t pos) { wavfile.seek(pos); }//!< seek to new file position
+	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
 
-	// Simple functions we can define immediately:
 	inline void readLater(void) //!< from interrupt: request to re-fill the buffer
 		{
             #if USE_EVENTRESPONDER_PLAYWAV
@@ -177,7 +178,7 @@ private:
 
 		}
 
-	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
+
 
 	int8_t* createBuffer(size_t len) //!< allocate the buffer
 		{
@@ -322,11 +323,13 @@ public:
 	AudioPlayWav(void) : AudioStream(0, NULL) { begin(); }
 	~AudioPlayWav(void) { end(); } // no need to free audio blocks, never permanently allocates any
     void stop(void);
+
 	bool play(File file, bool paused = false);
 	bool play(const char *filename, bool paused = false); // optional start in paused state
-    // Todo:
-    // - playRaw
-    // - playAiff (!! code added, untested, test needed!!)
+
+    bool playRaw(File file, APW_FORMAT fmt, uint8_t number_of_channels, bool paused = false);
+    bool playRaw(const char *filename, APW_FORMAT fmt, uint8_t number_of_channels, bool paused = false);
+
 	static bool addMemoryForRead(size_t mult); // add memory
 	void togglePlayPause(void) {togglePause();};
     bool isPlaying(void) {return isRunning();};
@@ -339,7 +342,7 @@ public:
 private:
     void begin(void);
 	void end(void);
-	bool readHeader(int newState);
+    bool readHeader(APW_FORMAT fmt, uint8_t number_of_channels, int newState );
     size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
 	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
