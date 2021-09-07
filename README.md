@@ -20,7 +20,8 @@ Extended version
 - n channel 8 bit unsigned *.aifc
 - n channel u-law *.aifc (Apple, non ccitt)
 - n channel 16 bit signed *.aiff
-- Formats under development: raw
+- n channel 8 bit signed, unsigned or u-law RAW
+- n channel 16 bit signed, unsigned or 16 bit big-endian signed RAW
 
 
 

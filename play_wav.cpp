@@ -520,7 +520,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     dataFmt = fmt;
 
     buffer_rd = total_length = data_length = 0;
-    channelmask = channels = bytes = 0;
+    channelmask = bytes = 0;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
@@ -542,6 +542,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     last_err = APW_ERR_FORMAT;
     if ( dataFmt != APW_NONE) {
         // ---------- RAW ----------------------------
+        //Serial.println("Format: RAW");
         total_length = wavfile.size();
         if (total_length == 0) return false;
         switch (dataFmt)
@@ -576,7 +577,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
         do {
             irq = stopInt();
-            wavfile.seek(position);
+            seek(position);
             rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
             dataHeader.chunkSize = __rev(dataHeader.chunkSize);
@@ -649,7 +650,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
         do {
             irq = stopInt();
-            wavfile.seek(position);
+            seek(position);
             rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
 
