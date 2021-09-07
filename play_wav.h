@@ -41,10 +41,7 @@
 #include <AudioStream.h>
 #include <SD.h>
 
-
-
 #define ENABLE_EVENTRESPONDER_PLAYWAV //comment to reduce codesize, TensyLC: always disabled.
-
 
 enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
                   APW_16BIT_SIGNED, APW_16BIT_SIGNED_BIGENDIAN};
@@ -97,6 +94,10 @@ enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
 #define CPULOAD_PLAYWAV // TODO: Can we remove this before first release?
 #endif
 
+
+class AudioPlayWav;
+class AudioRecordWav;
+
 /*********************************************************************************************************/
 /**
  * Class to move WAV data to and from files, optionally using
@@ -109,17 +110,6 @@ enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
 class AudioBaseWav
 {
 public:
-    AudioBaseWav(void)
-	{
-        SPTF("Constructing AudioBaseWav at %X\r\n",this);
-        buf_unaligned = buffer = nullptr;
-        #if defined (DEBUG_PIN_PLAYWAV)
-            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
-        #endif
-
-	}
-    ~AudioBaseWav(void){ close(); }
-
 	void pause(bool pause);
 	bool isPaused(void) {return (state == APW_STATE_PAUSED);};
 	bool isStopped(void) {return (state == APW_STATE_STOP);};
@@ -131,6 +121,7 @@ public:
     float getCPUload() { return CYCLE_COUNTER_APPROX_PERCENT(lastFileCPUload * bytes * channels);}
     uint32_t lastFileCPUload;	//!< CPU load for last SD card transaction, spread over the number of audio blocks loaded
     #endif
+
     #if USE_EVENTRESPONDER_PLAYWAV
 	static void enableEventReading(bool enable) { eventReadingEnabled = enable; }
     #endif
@@ -143,11 +134,23 @@ public:
 	uint32_t sampleRate(void) {return sample_rate;};
     uint8_t instanceID(void) {return my_instance;};
     uint8_t lastErr(void) {return last_err;};
-
+    File file(void) {return wavfile;};
 	//--------------------------------------------------------------------------------------------------
 
-protected:
-	//--------------------------------------------------------------------------------------------------
+private:
+    friend class AudioPlayWav;
+    friend class AudioRecordWav;
+
+    AudioBaseWav(void)
+	{
+        SPTF("Constructing AudioBaseWav at %X\r\n",this);
+        buf_unaligned = buffer = nullptr;
+        #if defined (DEBUG_PIN_PLAYWAV)
+            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
+        #endif
+	}
+    ~AudioBaseWav(void){ close(); }
+
     inline void setPadding(uint8_t b) { padding = b; }
     inline void seek(size_t pos) { wavfile.seek(pos); }//!< seek to new file position
 
@@ -291,6 +294,13 @@ protected:
     void startInt(bool enabled);
 
     File wavfile;
+    size_t sz_mem;					    //!< size of buffer
+    void* buf_unaligned;                // the malloc'd buffer
+    int8_t* buffer;					    //!< buffer to store pre-loaded WAV data going to or from SD card
+    #if USE_EVENTRESPONDER_PLAYWAV
+	EventResponder evResp; 			    //!< executes data transfer in foreground
+    static bool eventReadingEnabled;    //!< true to read filesystem via EventResponder; otherwise inside update() as usual
+    #endif
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
@@ -300,17 +310,6 @@ protected:
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
     uint8_t last_err = APW_ERR_OK;
-
-private:
-    size_t sz_mem;					    //!< size of buffer
-    void* buf_unaligned;                // the malloc'd buffer
-    int8_t* buffer;					    //!< buffer to store pre-loaded WAV data going to or from SD card
-
-    #if USE_EVENTRESPONDER_PLAYWAV
-	EventResponder evResp; 			    //!< executes data transfer in foreground
-    static bool eventReadingEnabled;    //!< true to read filesystem via EventResponder; otherwise inside update() as usual
-    #endif
-
 	uint8_t padding;				    //!< value to pad buffer at EOF
 
 };
@@ -346,6 +345,8 @@ private:
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
 };
+
+/*********************************************************************************************************/
 
 #if !defined(KINETISL)
 class AudioRecordWav : public AudioBaseWav, public AudioStream
