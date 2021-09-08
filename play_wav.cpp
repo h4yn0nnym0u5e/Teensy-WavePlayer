@@ -1019,7 +1019,7 @@ bool AudioRecordWav::writeHeader(File file)
 }
 
 __attribute__((hot))
-void  AudioRecordWav::update(void)
+void  AudioPlayWav::update(void)
 {
     if (state != APW_STATE_RECORD) return;
     //[...]
