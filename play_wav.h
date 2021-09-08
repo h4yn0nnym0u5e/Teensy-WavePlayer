@@ -307,6 +307,7 @@ private:
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
     size_t total_length = 0;			// number of audio data bytes in file
+    int data_length;		  	        // number of frames remaining in file
     APW_FORMAT dataFmt;
 	uint8_t my_instance;                // instance id
     bool usingSPI = false;
@@ -347,7 +348,6 @@ private:
 	void end(void);
     bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState );
     size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
-	int data_length;		  	        // number of frames remaining in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
 };
@@ -362,8 +362,8 @@ public:
     ~AudioRecordWav(void) { end(); }
     void stop(void);
 
-    bool record(File file);
-    bool record(const char *filename);
+    bool record(File file, APW_FORMAT fmt, unsigned int channels, bool paused = false);
+    bool record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused = false);
 
     bool writeHeader(File file); //updates header of a file
     bool writeHeader(const char *filename);
@@ -382,6 +382,7 @@ private:
     void begin(void);
     void end(void);
     void pause(const bool pause);
-    bool headerWritten;
+    size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
+    int data_length_old;
 };
 #endif // defined(KINETISL)

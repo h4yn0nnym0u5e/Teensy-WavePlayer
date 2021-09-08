@@ -356,6 +356,7 @@ void AudioPlayWav::end(void)
 bool AudioPlayWav::play(File file, const bool paused)
 {
     stop();
+    if (!file) return false;
 
     initRead(file);
     startUsingSPI();
@@ -911,6 +912,17 @@ uint32_t AudioPlayWav::positionMillis(void)
 //----------------------------------------------------------------------------------------------------
 #if !defined(KINETISL)
 
+typedef struct
+{
+    tFileHeader fileHeader;
+    struct {
+        tDataHeader dataHeader;
+        tFmtHeaderEx fmtHeader;
+    } file;
+    tDataHeader dataHeader;
+
+} __attribute__ ((__packed__)) tWaveFileHeader;
+
 void AudioRecordWav::begin(void)
 {
     state = APW_STATE_STOP;
@@ -949,26 +961,65 @@ void AudioRecordWav::pause(const bool pause)
     startInt(irq);
 }
 
-
-typedef struct
+bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bool paused)
 {
-    tFileHeader fileHeader;
-    struct {
-        tDataHeader dataHeader;
-        tFmtHeaderEx fmtHeader;
-    } file;
-    tDataHeader dataHeader;
+    tWaveFileHeader fileHeader;
+    bool irq, ok;
+    size_t wr;
 
-} __attribute__ ((__packed__)) tWaveFileHeader;
+    stop();
+    if (!file) return false;
+    if (fmt != APW_16BIT_SIGNED) return false;
+    
+    dataFmt = APW_NONE;
+    channels = 0;
+    total_length = data_length = data_length_old = 0;
+
+    initWrite(file);
+    startUsingSPI();
+
+    //write a dummy fileheader and check if it was successful:
+    memset(&fileHeader, 0xff, sizeof(fileHeader));
+    irq = stopInt();
+
+    ok = seek(0);
+    wr = write(&fileHeader, sizeof(fileHeader));
+    flush();
+    startInt(irq);
+    if (!ok || wr < sizeof(fileHeader)) return false;
+
+    this->channels = channels;
+    #ifndef(__IMXRT1062__)
+    sample_rate = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
+    #else 
+    sample_rate = AUDIO_SAMPLE_RATE_EXACT;
+    #endif
+    dataFmt = fmt;
+
+    //[..]
+
+    return true;
+}
+
+bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused)
+{
+    stop();
+    startUsingSPI();
+
+    bool irq = stopInt();
+    File file = SD.open(filename, FILE_WRITE_BEGIN);
+    startInt(irq);
+    return record(file, fmt, channels, paused);
+    
+    return false;
+}
 
 bool AudioRecordWav::writeHeader(File file)
 {
 
     if (state == APW_STATE_RECORD) return false;
-    if (headerWritten) return false;
-
-    // Assume written now, regardless of possible errors:
-    headerWritten = true;
+    if (data_length == data_length_old) return false;
+    data_length_old = data_length;
 
     bool ok, irq;
     size_t pos, sz, wr;
@@ -982,8 +1033,6 @@ bool AudioRecordWav::writeHeader(File file)
 
     sz = size();
     if (sz == 0) sz = sizeof(tWaveFileHeader);
-
-    int sr = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
 
     tWaveFileHeader header;
 
@@ -999,8 +1048,8 @@ bool AudioRecordWav::writeHeader(File file)
         header.file.fmtHeader.wFormatTag = 65534;
 
     header.file.fmtHeader.wChannels = channels;
-    header.file.fmtHeader.dwSamplesPerSec = sr;
-    header.file.fmtHeader.dwAvgBytesPerSec = sr * bytes * channels;
+    header.file.fmtHeader.dwSamplesPerSec = sample_rate;
+    header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
     header.file.fmtHeader.wBlockAlign = 0;
     header.file.fmtHeader.wBitsPerSample = bytes * 8;
     header.file.fmtHeader.cbSize = 0;
@@ -1022,8 +1071,37 @@ __attribute__((hot))
 void  AudioRecordWav::update(void)
 {
     if (state != APW_STATE_RECORD) return;
-    //[...]
-    headerWritten = false;
+
+    unsigned int chan;
+
+	// allocate the audio blocks
+    audio_block_t *queue[channels];
+    chan = 0;
+    do
+    {
+		queue[chan] = AudioStream::receiveReadOnly();
+		if ( (queue[chan] == nullptr) ) {
+			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
+			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			SPLN("WaveRecord stopped: Not enough AudioMemory().");
+			stop();
+            return;
+		}
+	} while (++chan < channels);
+
+
+    //todo[...]
+
+    total_length += channels * bytes;
+    ++data_length;
+
+	// release them:
+    chan = 0;
+    do
+    {
+		AudioStream::release(queue[chan]);
+	} while (++chan < channels);
+
 }
 
 #endif // !defined(KINETISL)
