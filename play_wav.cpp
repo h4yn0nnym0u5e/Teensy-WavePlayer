@@ -371,12 +371,13 @@ bool AudioPlayWav::play(File file, const bool paused)
 
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
-    stop();
+    stop();    
     startUsingSPI();
 
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
+    if (!file) return false;
     return play(file, paused);
 }
 
@@ -403,6 +404,7 @@ bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint32_t sample
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
+    if (!file) return false;
     return playRaw(file, fmt, sampleRate, number_of_channels, paused);
 }
 
@@ -989,7 +991,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     if (!ok || wr < sizeof(fileHeader)) return false;
 
     this->channels = channels;
-    #ifndef(__IMXRT1062__)
+    #if !defined(__IMXRT1062__)
     sample_rate = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
     #else 
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
@@ -1009,9 +1011,9 @@ bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int c
     bool irq = stopInt();
     File file = SD.open(filename, FILE_WRITE_BEGIN);
     startInt(irq);
+    if (!file) return false;
     return record(file, fmt, channels, paused);
     
-    return false;
 }
 
 bool AudioRecordWav::writeHeader(File file)
