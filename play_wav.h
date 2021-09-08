@@ -127,7 +127,6 @@ public:
     bool addMemory(size_t mult);
 	size_t memUsed(void) {return getBufferSize();};
 	uint32_t filePos(void);
-	uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
 	uint32_t numBits(void) {return bytes * 8;}
 	uint32_t numChannels(void) {return channels;};
 	uint32_t sampleRate(void) {return sample_rate;};
@@ -282,7 +281,7 @@ private:
 	}
     #endif
 
-	//--------------------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------------------    
 	bool initRead(File file);
 	bool initWrite(File file);
     bool isRunning(void);
@@ -301,7 +300,6 @@ private:
     #endif
 	unsigned int sample_rate = 0;
 	unsigned int channels = 0;			// #of channels in the wave file
-    size_t total_length = 0;			// number of audio data bytes in file
     int data_length;		  	        // number of frames remaining in file /# of recorded frames
     APW_FORMAT dataFmt;
 	uint8_t my_instance;                // instance id
@@ -309,7 +307,7 @@ private:
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	APW_STATE state = STATE_STOP;	    // play status (stop, pause, running)
     APW_ERR last_err = ERR_OK;	
-    uint8_t padding = 0;
+    uint8_t padding = 0;                //!< value to pad buffer at EOF
 };
 
 /*********************************************************************************************************/
@@ -332,7 +330,7 @@ public:
     bool isPlaying(void) {return isRunning();};
 	uint32_t positionMillis(void);
 	uint32_t channelMask(void) {return channelmask;};
-
+    uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
     #if USE_EVENTRESPONDER_PLAYWAV
 	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
     #endif
@@ -343,11 +341,10 @@ private:
     bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState );
     inline void setPadding(uint8_t b) { padding = b; }
     size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
+    size_t total_length = 0;			// number of audio data bytes in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
-                                        //!< value to pad buffer at EOF
-};
-
+};    
 /*********************************************************************************************************/
 
 #if !defined(KINETISL)
@@ -380,6 +377,7 @@ private:
     void pause(const bool pause);
     size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
     audio_block_t *queue[_AudioRecordWav_MaxChannels];
+    size_t sz_frame;
     int data_length_old;
 };
 #endif // defined(KINETISL)

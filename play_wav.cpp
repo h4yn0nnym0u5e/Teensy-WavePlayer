@@ -1000,8 +1000,8 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     if (fmt != APW_16BIT_SIGNED) return false;
 
     dataFmt = APW_NONE;
-    sample_rate = channels = 0;
-    total_length = data_length = data_length_old = 0;
+    sz_frame = sample_rate = channels = 0;
+    data_length = data_length_old = 0;
 
     initWrite(file);
     startUsingSPI();
@@ -1028,24 +1028,26 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
     #endif
 
-    size_t sz_frame = AUDIO_BLOCK_SAMPLES * channels;
- 
-    //calculate the needed buffer memory:    
+    sz_frame = AUDIO_BLOCK_SAMPLES * channels;
+
+    //calculate the needed buffer memory:
     size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
-    sz_mem *= _sz_mem_additional;    
-    
-     //allocate: note this buffer pointer is temporary
+    sz_mem *= _sz_mem_additional;
+
+    //allocate: note this buffer pointer is temporary
+    /* todo: use that later
     int8_t* buffer =  createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
-	}   
-    
+	}
+    */
+
     encoder = &encode_16bit; //Todo !!
 
-    last_err = ERR_OK;    
-    state = paused? STATE_PAUSED : STATE_RUNNING;    
+    last_err = ERR_OK;
+    state = paused? STATE_PAUSED : STATE_RUNNING;
     return true;
 }
 
@@ -1122,30 +1124,37 @@ bool AudioRecordWav::writeHeader(File file)
 __attribute__((hot))
 void  AudioRecordWav::update(void)
 {
-    
+
     unsigned int chan;
+    size_t wr;
+    int8_t buffer[sz_mem]; //todo: remove that later and use malloc'd mem
 
     chan = 0;
     do
     {
 		queue[chan] = AudioStream::receiveReadOnly(chan);
         if ( (queue[chan] == nullptr) ) queue[chan] = &zeroblock;
-     
 	} while (++chan < _AudioRecordWav_MaxChannels);
-    
+
     if (state != STATE_RUNNING) goto noRecording;
 
-    //todo[...]
+    encoder(buffer, 0, queue, channels);
 
-    total_length += channels * bytes;
+    wr = write(&buffer, sz_mem);
+    if (wr < sz_mem) { 
+        stop(); //Disk full, max filesize reached, SD Card removed etc.
+        last_error = ERR_FILE;
+        goto noRecording;
+    }
+    
     ++data_length;
 
 noRecording:
-	// release them:
+	// release queues
     chan = 0;
     do
     {
-		if (queue[chan] != &zeroblock)            
+		if (queue[chan] != &zeroblock)
             AudioStream::release(queue[chan]);
 	} while (++chan < _AudioRecordWav_MaxChannels);
 
