@@ -38,11 +38,6 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
-extern "C" {
-    extern const int16_t ulaw_decode_table[256];
-};
-
-
 //#define HANDLE_SPI    1 //TODO...
 
 #if defined(KINETISL)
@@ -56,6 +51,25 @@ static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
 #endif // defined(KINETISL)
+
+
+//----------------------------------------------------------------------------------------------------
+#if !defined(KINETISL)
+//Reverse Byte order:
+__attribute__( ( always_inline ) ) static inline uint32_t __rev(uint32_t value)
+{
+  uint32_t result;
+  asm volatile ("rev %0, %1" : "=r" (result) : "r" (value) );
+  return(result);
+}
+
+__attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value)
+{
+  uint32_t result;
+  asm volatile ("rev16 %0, %1" : "=r" (result) : "r" (value) );
+  return(result);
+}
+#endif
 
 //----------------------------------------------------------------------------------------------------
 bool AudioBaseWav::stopInt()
@@ -115,15 +129,32 @@ uint32_t AudioBaseWav::filePos(void)
 	return result;
 }
 
+bool AudioBaseWav::addMemory(__attribute__ ((unused)) size_t mult)
+{
+#if !defined(KINETISL)
+    if (mult < 1) mult = 1;
+	_sz_mem_additional = mult;
+#endif // !defined(KINETISL)
+	return true;
+}
+
 void AudioBaseWav::startUsingSPI(void)
 {
 //TODO... https://forum.pjrc.com/threads/67989-Teensyduino-1-55-Beta-1?p=287023&viewfull=1#post287023
 //this must be smarter.
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
-   if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStartUsingSPI();
+    if (!usingSPI && !(SIM_SCGC3 & SIM_SCGC3_SDHC))
+    {
+        AudioStartUsingSPI();
+        usingSPI = true;
+    }
 #else
-    AudioStartUsingSPI();
+    if (!usingSPI)
+    {
+        AudioStartUsingSPI();
+        usingSPI = true;
+    }
 #endif // defined(HAS_KINETIS_SDHC)
 #endif //defined(HANDLE_SPI)
 }
@@ -132,23 +163,34 @@ void AudioBaseWav::stopUsingSPI(void)
 { //TODO...
 #if defined(HANDLE_SPI)
 #if defined(HAS_KINETIS_SDHC)
-    if (!(SIM_SCGC3 & SIM_SCGC3_SDHC)) AudioStopUsingSPI();
+    if (usingSPI && !(SIM_SCGC3 & SIM_SCGC3_SDHC)
+    {
+        AudioStopUsingSPI();
+        usingSPI = false;
+    }
 #else
-    AudioStopUsingSPI();
+    if (usingSPI)
+    {
+        AudioStopUsingSPI();
+        usingSPI = false;
+    }
 #endif // defined(HAS_KINETIS_SDHC)
 #endif //defined(HANDLE_SPI)
 }
 
 //----------------------------------------------------------------------------------------------------
+#if USE_EVENTRESPONDER_PLAYWAV
 bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem in EventResponder, otherwise accesses happen under interrupt
+#endif
 /*
  * Initialise ready to move data from SD card to memory
  */
 bool AudioBaseWav::initRead(File file)
 {
 	wavfile = file;
+    #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncRead);
-
+    #endif
 	return true;
 }
 
@@ -158,19 +200,19 @@ bool AudioBaseWav::initRead(File file)
 bool AudioBaseWav::initWrite(File file)
 {
 	wavfile = file;
+    #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncWrite);
-
+    #endif
 	return true;
 }
 
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
-__attribute__((hot))
-void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+__attribute__((hot)) static
+size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
     do {
@@ -179,51 +221,85 @@ void decode_8bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], uns
             queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return p - buffer;
 
 }
 
 
 // 8 bit signed:
-__attribute__((hot))
-void decode_8bit_signed(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+__attribute__((hot)) static
+size_t decode_8bit_signed(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
     do {
         unsigned int chan = 0;
         do {
-            queue[chan]->data[i] = *p++;
+            queue[chan]->data[i] = (*p++) << 8;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return p - buffer;
 
 }
 
+//https://github.com/dpwe/dpwelib
+const static short ulaw_decode[256] = {
+    -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
+    -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
+    -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
+    -11900, -11388, -10876, -10364,  -9852,  -9340,  -8828,  -8316,
+     -7932,  -7676,  -7420,  -7164,  -6908,  -6652,  -6396,  -6140,
+     -5884,  -5628,  -5372,  -5116,  -4860,  -4604,  -4348,  -4092,
+     -3900,  -3772,  -3644,  -3516,  -3388,  -3260,  -3132,  -3004,
+     -2876,  -2748,  -2620,  -2492,  -2364,  -2236,  -2108,  -1980,
+     -1884,  -1820,  -1756,  -1692,  -1628,  -1564,  -1500,  -1436,
+     -1372,  -1308,  -1244,  -1180,  -1116,  -1052,   -988,   -924,
+      -876,   -844,   -812,   -780,   -748,   -716,   -684,   -652,
+      -620,   -588,   -556,   -524,   -492,   -460,   -428,   -396,
+      -372,   -356,   -340,   -324,   -308,   -292,   -276,   -260,
+      -244,   -228,   -212,   -196,   -180,   -164,   -148,   -132,
+      -120,   -112,   -104,    -96,    -88,    -80,    -72,    -64,
+       -56,    -48,    -40,    -32,    -24,    -16,     -8,      0,
+     32124,  31100,  30076,  29052,  28028,  27004,  25980,  24956,
+     23932,  22908,  21884,  20860,  19836,  18812,  17788,  16764,
+     15996,  15484,  14972,  14460,  13948,  13436,  12924,  12412,
+     11900,  11388,  10876,  10364,   9852,   9340,   8828,   8316,
+      7932,   7676,   7420,   7164,   6908,   6652,   6396,   6140,
+      5884,   5628,   5372,   5116,   4860,   4604,   4348,   4092,
+      3900,   3772,   3644,   3516,   3388,   3260,   3132,   3004,
+      2876,   2748,   2620,   2492,   2364,   2236,   2108,   1980,
+      1884,   1820,   1756,   1692,   1628,   1564,   1500,   1436,
+      1372,   1308,   1244,   1180,   1116,   1052,    988,    924,
+       876,    844,    812,    780,    748,    716,    684,    652,
+       620,    588,    556,    524,    492,    460,    428,    396,
+       372,    356,    340,    324,    308,    292,    276,    260,
+       244,    228,    212,    196,    180,    164,    148,    132,
+       120,    112,    104,     96,     88,     80,     72,     64,
+	    56,     48,     40,     32,     24,     16,      8,      0 };
+
 // 8 bit ulaw:
-__attribute__((hot))
-void decode_8bit_ulaw(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+__attribute__((hot)) static
+size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-    int8_t *p = &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES;
+    uint8_t *p = (uint8_t*)&buffer[buffer_rd];
 
     size_t i = 0;
     do {
         unsigned int chan = 0;
         do {
-            queue[chan]->data[i] = ulaw_decode_table[*p++];
+            queue[chan]->data[i] = ulaw_decode[*p++];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-
+    return (int8_t*)p - buffer;
 }
 
 // 16 bit:
-__attribute__((hot))
-void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], unsigned int channels)
+__attribute__((hot)) static
+size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
 
-    int16_t *p = (int16_t*) &buffer[*buffer_rd];
-    *buffer_rd += channels * AUDIO_BLOCK_SAMPLES * 2;
+    int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
     do {
         unsigned int chan = 0;
@@ -231,8 +307,27 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
             queue[chan]->data[i] = *p++;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
+    return (int8_t*)p - buffer;
+}
+
+// 16 bit big endian:
+#if !defined(KINETISL)
+__attribute__((hot)) static
+size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
+{
+
+    int16_t *p = (int16_t*) &buffer[buffer_rd];
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            queue[chan]->data[i] = __rev16(*p++);
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+    return (int8_t*)p - buffer;
 
 }
+#endif
 
 // Todo:
 //- upsampling (CMSIS?)
@@ -241,7 +336,6 @@ void decode_16bit(int8_t buffer[], size_t *buffer_rd, audio_block_t *queue[], un
 //- play float formats?
 
 //----------------------------------------------------------------------------------------------------
-FLASHMEM
 void AudioPlayWav::begin(void)
 {
     state = APW_STATE_STOP;
@@ -251,8 +345,6 @@ void AudioPlayWav::begin(void)
 #endif // !defined(KINETISL)
 }
 
-
-FLASHMEM
 void AudioPlayWav::end(void)
 {
 	stop();
@@ -261,34 +353,21 @@ void AudioPlayWav::end(void)
 #endif // !defined(KINETISL)
 }
 
-
-bool AudioPlayWav::play(File file)
-{
-    return play(file, false);
-}
-
-
 bool AudioPlayWav::play(File file, const bool paused)
 {
     stop();
+    if (!file) return false;
 
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader( paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(APW_NONE, 0, 0,  paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
     }
     return true;
 }
-
-
-bool AudioPlayWav::play(const char *filename)
-{
-    return play(filename, false);
-}
-
 
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
@@ -298,9 +377,18 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     bool irq = stopInt();
     File file = SD.open(filename);
     startInt(irq);
-	initRead(file);
+    if (!file) return false;
+    return play(file, paused);
+}
 
-    if (!readHeader(paused ? APW_STATE_PAUSED : APW_STATE_PLAY))
+bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused)
+{
+    stop();
+
+    initRead(file);
+    startUsingSPI();
+
+    if (!readHeader(fmt, sampleRate, number_of_channels, paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
     {
         stop();
         return false;
@@ -308,6 +396,17 @@ bool AudioPlayWav::play(const char *filename, const bool paused)
     return true;
 }
 
+bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused)
+{
+    stop();
+    startUsingSPI();
+
+    bool irq = stopInt();
+    File file = SD.open(filename);
+    startInt(irq);
+    if (!file) return false;
+    return playRaw(file, fmt, sampleRate, number_of_channels, paused);
+}
 
 void AudioPlayWav::stop(void)
 {
@@ -321,7 +420,7 @@ void AudioPlayWav::stop(void)
     stopUsingSPI();
 }
 
-
+//WAV:
 /*
   00000000  52494646 66EA6903 57415645 666D7420  RIFFf.i.WAVEfmt
   00000010  10000000 01000200 44AC0000 10B10200  ........D.......
@@ -393,80 +492,252 @@ typedef struct {
 } tDataHeader;
 
 
-bool AudioPlayWav::readHeader(int newState)
+//AIFF, AIFC:
+// http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-1.3.pdf
+// http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/AIFF/Docs/AIFF-C.9.26.91.pdf
+
+/*
+ 00000000  46 4F 52 4D 00 01 6F 94 41 49 46 46 43 4F 4D 4D  FORM..o”AIFFCOMM
+ 00000010  00 00 00 12 00 02 00 00 5B C5 00 10 40 0B FA 00  ........[Å..@.ú.
+ 00000020  00 00 00 00 00 00 41 4E 4E 4F 00 00 00 49 41 46  ......ANNO...IAF
+ 00000030  73 70 64 61 74 65 3A 20 32 30 30 33 2D 30 31 2D  spdate: 2003-01-
+ 00000040  33 30 20 30 33 3A 32 38 3A 33 36 20 55 54 43 00  30 03:28:36 UTC.
+ 00000050  75 73 65 72 3A 20 6B 61 62 61 6C 40 43 41 50 45  user: kabal@CAPE
+ 00000060  4C 4C 41 00 70 72 6F 67 72 61 6D 3A 20 43 6F 70  LLA.program: Cop
+ 00000070  79 41 75 64 69 6F 00 00 53 53 4E 44 00 01 6F 1C  yAudio..SSND..o.
+*/
+
+static const uint32_t cFORM = 0x4D524F46; //'FORM'
+static const uint32_t cAIFF = 0x46464941; //'AIFF'
+static const uint32_t cAIFC = 0x43464941; //'AIFC'
+static const uint32_t cCOMM = 0x4D4D4F43; //'COMM'
+static const uint32_t cSSND = 0x444e5353; //'SSND'
+//static const uint32_t cULAW = 0x57414C55; //'ULAW' // not supported
+static const uint32_t culaw = 0x77616c75; //'ulaw'
+static const uint32_t craw =  0x20776172; //'raw '
+
+typedef struct {
+    short numChannels;
+    unsigned long numSampleFrames;
+    short sampleSize;
+    uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
+}  __attribute__ ((__packed__)) taiffCommonChunk;
+
+typedef struct {
+    short numChannels;
+    unsigned long numSampleFrames;
+    short sampleSize;
+    uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
+    unsigned long compressionType;
+}  __attribute__ ((__packed__)) taifcCommonChunk;
+
+
+bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState)
 {
-    size_t sz_frame, position, rd;
+    size_t sz_frame, rd;
     tFileHeader fileHeader;
     tDataHeader dataHeader;
-    bool irq, fmtok;
+    bool irq;
+
+    sample_rate = sampleRate;
+    channels = number_of_channels;
+    dataFmt = fmt;
 
     buffer_rd = total_length = data_length = 0;
-    channelmask = sample_rate = channels = bytes = 0;
+    channelmask = bytes = 0;
 
     last_err = APW_ERR_FILE;
     if (!wavfile) return false;
 
-
     irq = stopInt();
-    rd = read(&fileHeader, sizeof(fileHeader));
+    seek(0);
+
+    if ( dataFmt == APW_NONE) {
+        rd = read(&fileHeader, sizeof(fileHeader));
+        if (rd < sizeof(fileHeader)) { startInt(irq); return false; }
+    } else {
+         //just check if the file is readable:
+        rd = read(&fileHeader, 1);
+        if (rd < 1) { startInt(irq); return false; }
+        seek(0);
+    }
     startInt(irq);
-    if (rd < sizeof(fileHeader)) return false;
 
     last_err = APW_ERR_FORMAT;
-	if ( fileHeader.id != cRIFF || fileHeader.riffType != cWAVE ) return false;
-
-	position = sizeof(fileHeader);
-    fmtok = false;
-
-    do {
-        irq = stopInt();
-        wavfile.seek(position);
-        rd = read(&dataHeader, sizeof(dataHeader));
-        startInt(irq);
-
-        if (rd < sizeof(dataHeader)) return false;
-
-        if (dataHeader.chunkID == cFMT) {
-            tFmtHeaderEx fmtHeader;
-            memset((void*)&fmtHeader, 0, sizeof(tFmtHeaderEx));
-
-            //Serial.println(dataHeader.chunkSize);
-            irq = stopInt();
-            if (dataHeader.chunkSize < 16) {
-                read(&fmtHeader, sizeof(tFmtHeader));
+    if ( dataFmt != APW_NONE) {
+        // ---------- RAW ----------------------------
+        //Serial.println("Format: RAW");
+        total_length = size();
+        if (total_length == 0) return false;
+        switch (dataFmt)
+        {
+            case APW_NONE: //to prevent a GCC warning..
+                break;
+            case APW_8BIT_UNSIGNED:
+            case APW_8BIT_SIGNED:
+            case APW_ULAW:
                 bytes = 1;
-            } else if (dataHeader.chunkSize == 16) {
-                read(&fmtHeader, sizeof(tFmtHeaderEx));
-                bytes = fmtHeader.wBitsPerSample / 8;
-            } else {
-                tFmtHeaderExtensible fmtHeaderExtensible;
-                read(&fmtHeader, sizeof(tFmtHeaderEx));
-                bytes = fmtHeader.wBitsPerSample / 8;
-                memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
-                read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
-                channelmask = fmtHeaderExtensible.dwChannelMask;
-                //Serial.printf("channel mask: 0x%x\n", channelmask);
-            }
+                break;
+            case APW_16BIT_SIGNED:
+            case APW_16BIT_SIGNED_BIGENDIAN:
+                bytes = 2;
+                break;
+        }
+    }
+    else
+#if !defined(KINETISL)
+    if (fileHeader.id == cFORM &&
+       (fileHeader.riffType == cAIFF || fileHeader.riffType == cAIFC))
+    {
+        // ---------- AIFF ----------------------------
+        //unlike wav, the samples chunk (here "SSND") can be everywhere in the file!
+        //unfortunately, it is big endian :-(
+        size_t position = sizeof(fileHeader);
+
+        bool isAIFC = fileHeader.riffType == cAIFC;
+        //if ( isAIFC ) Serial.println("AIFC"); else Serial.println("AIFF");
+        bool COMMread = false;
+        bool SSNDread = false;
+
+        do {
+            irq = stopInt();
+            if (!seek(position)) return false;
+            rd = read(&dataHeader, sizeof(dataHeader));
+            startInt(irq);
+            dataHeader.chunkSize = __rev(dataHeader.chunkSize);
+            if (rd < sizeof(dataHeader)) return false;
+            //Serial.printf("Chunk:%c%c%c%c", (char)dataHeader.chunkID & 0xff, (char)(dataHeader.chunkID >> 8 & 0xff), (char)(dataHeader.chunkID  >> 16 & 0xff), (char)(dataHeader.chunkID >> 24 &0xff));
+            //Serial.printf(" 0x%x size: %d\n",dataHeader.chunkID, dataHeader.chunkSize);
+            if (!COMMread && dataHeader.chunkID == cCOMM) {
+                //Serial.print(":COMM ");
+                taifcCommonChunk commonChunk;
+                rd = read(&commonChunk, sizeof(commonChunk));
+                if (rd < sizeof(commonChunk)) return false;
+
+                channels = __rev16(commonChunk.numChannels);
+                commonChunk.sampleSize = __rev16 (commonChunk.sampleSize);
+                bytes = commonChunk.sampleSize / 8;
+                total_length = __rev(commonChunk.numSampleFrames) * channels * bytes;
+
+                //Serial.printf("Channels:%d Length:%d Bytes:%d\n", (int)channels, (int)total_length, (int)bytes);
+                if (total_length == 0) return false;
+                if (commonChunk.sampleSize != 8 && commonChunk.sampleSize != 16) return false;
+
+                //if (isAIFC) Serial.printf("Compression:%c%c%c%c 0x%x\n", (char)commonChunk.compressionType & 0xff, (char)(commonChunk.compressionType >> 8 & 0xff), (char)(commonChunk.compressionType  >> 16 & 0xff), (char)(commonChunk.compressionType >> 24 &0xff), commonChunk.compressionType);
+
+                if (bytes == 2) {
+                    if (isAIFC) return false;
+                    dataFmt = APW_16BIT_SIGNED; //16 Bit signed
+                } else
+                if (bytes == 1){
+                    if (isAIFC) {
+                        switch(commonChunk.compressionType)
+                        {
+                            case culaw: dataFmt = APW_ULAW;
+                                        break;
+                            case craw:  dataFmt = APW_8BIT_UNSIGNED;
+                                        break;
+                            default:    return false;
+                        }
+                    } else
+                    dataFmt = APW_8BIT_SIGNED;
+                } else return false;
+
+                COMMread = true;
+                if (SSNDread) break;
+
+            } else if (dataHeader.chunkID == cSSND) {
+                //todo: offset etc...
+
+                //Serial.println(":SSND");
+                SSNDread = true;
+                if (COMMread) break;
+            } ;
+
+            position += sizeof(dataHeader) + dataHeader.chunkSize ;
+            if (position & 1) position++; //make position even
+        } while(true);
+
+        if (!SSNDread || !COMMread) return false;
+
+    }  // AIFF
+	else
+#endif
+
+    if ( fileHeader.id == cRIFF &&
+         fileHeader.riffType == cWAVE )
+    {
+        // ---------- WAV ----------------------------
+        //Serial.println("Format: WAV");
+        size_t position = sizeof(fileHeader);
+        bool fmtok = false;
+
+        do {
+            irq = stopInt();
+            seek(position);
+            rd = read(&dataHeader, sizeof(dataHeader));
             startInt(irq);
 
-            //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
-            sample_rate = fmtHeader.dwSamplesPerSec;
-            channels = fmtHeader.wChannels;
-            if (bytes == 0 || bytes > 2) return false;
-            if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
-            if (fmtHeader.wFormatTag != 1 && fmtHeader.wFormatTag != 65534) return false;
-            fmtok = true;
-        }
-        else if (dataHeader.chunkID == cDATA) break;
+            if (rd < sizeof(dataHeader)) return false;
 
-        position += sizeof(dataHeader) + dataHeader.chunkSize;
-    } while(true);
+            if (dataHeader.chunkID == cFMT) {
+                tFmtHeaderEx fmtHeader;
+                memset((void*)&fmtHeader, 0, sizeof(tFmtHeaderEx));
 
-    if (fmtok != true) return false;
+                //Serial.println(dataHeader.chunkSize);
+                irq = stopInt();
+                if (dataHeader.chunkSize < 16) {
+                    read(&fmtHeader, sizeof(tFmtHeader));
+                    bytes = 1;
+                } else if (dataHeader.chunkSize == 16) {
+                    read(&fmtHeader, sizeof(tFmtHeaderEx));
+                    bytes = fmtHeader.wBitsPerSample / 8;
+                } else {
+                    tFmtHeaderExtensible fmtHeaderExtensible;
+                    read(&fmtHeader, sizeof(tFmtHeaderEx));
+                    bytes = fmtHeader.wBitsPerSample / 8;
+                    memset((void*)&fmtHeaderExtensible, 0, sizeof(fmtHeaderExtensible));
+                    read(&fmtHeaderExtensible, sizeof(fmtHeaderExtensible));
+                    channelmask = fmtHeaderExtensible.dwChannelMask;
+                    //Serial.printf("channel mask: 0x%x\n", channelmask);
+                }
+                startInt(irq);
+
+                //Serial.printf("Format:%d Bits:%d\n", fmtHeader.wFormatTag, fmtHeader.wBitsPerSample);
+                if (fmtHeader.dwSamplesPerSec == 0) return false;
+                sample_rate = fmtHeader.dwSamplesPerSec;
+                channels = fmtHeader.wChannels;
+                if (bytes == 0 || bytes > 2) return false;
+                if (fmtHeader.wFormatTag != 1 &&
+                    fmtHeader.wFormatTag != 7 && //ulaw
+                    fmtHeader.wFormatTag != 65534) return false;
+                if (fmtHeader.wFormatTag == 7) {
+                    if (bytes != 1) return false;
+                    dataFmt = APW_ULAW; //ulaw
+                    //Serial.println("ULAW!");
+                }
+                fmtok = true;
+            }
+            else
+            if (dataHeader.chunkID == cDATA) {
+                    total_length = dataHeader.chunkSize;
+                    break;
+            }
+
+            position += sizeof(dataHeader) + dataHeader.chunkSize;
+        } while(true);
+
+        if (fmtok != true) return false;
+
+    }  //wav
+    else
+        return false; //unknown format
+
+    if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
+    if (sample_rate == 0) sample_rate = AUDIO_SAMPLE_RATE_EXACT;
 
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
-    total_length = dataHeader.chunkSize;
-	data_length = dataHeader.chunkSize / (sz_frame * bytes);
+    data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
     size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
@@ -483,21 +754,35 @@ bool AudioPlayWav::readHeader(int newState)
     last_err = APW_ERR_OK;
 
     setPadding(0);
-    dataFmt = 0; //todo;
 
     switch(bytes) {
+        default:
         case 1: switch (dataFmt) {
-
-                    case 0: decoder = &decode_8bit;
+                    default:
+                    case APW_8BIT_UNSIGNED:
+                            decoder = &decode_8bit;
                             setPadding(128);
                             break;
-                    case 1: decoder = &decode_8bit_signed;
+                    case APW_8BIT_SIGNED:
+                            decoder = &decode_8bit_signed;
                             break;
-                    case 2: decoder = &decode_8bit_ulaw;
+                    case APW_ULAW:
+                            decoder = &decode_8bit_ulaw;
                             break;
                 }
+                break;
 
-        case 2: decoder =  &decode_16bit;
+        case 2: switch (dataFmt) {
+                    default:
+                    case APW_16BIT_SIGNED:
+                            decoder = &decode_16bit;
+                            break;
+                    #if !defined(KINETISL)
+                    case APW_16BIT_SIGNED_BIGENDIAN:
+                            decoder = &decode_16bit_bigendian;
+                            break;
+                    #endif
+                }
                 break;
     }
 
@@ -531,14 +816,9 @@ bool AudioPlayWav::readHeader(int newState)
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-    if ( state != APW_STATE_PLAY ) return;
+    if (state != APW_STATE_PLAY) return;
 
     unsigned int chan;
-	int8_t* currentPos = getBuffer(); // buffer pointer: don't cache, could change in the future
-	size_t sz_mem = getBufferSize();
-
-	if (nullptr == currentPos)
-		return;
 
 	// allocate the audio blocks to transmit
     audio_block_t *queue[channels];
@@ -548,16 +828,23 @@ void  AudioPlayWav::update(void)
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
 			last_err = APW_ERR_NO_AUDIOBLOCKS;
-			SPLN("Waveplayer stopped: not enough AudioMemory().");
+			SPLN("Waveplayer stopped: Not enough AudioMemory().");
 			stop();
             return;
 		}
 	} while (++chan < channels);
 
+	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
+    //if (nullptr == currentPos) return; //This WILL NOT happen. IF it happens, let it crash for easier debug.
 
 	// copy the samples to the audio blocks:
-    decoder(currentPos, &buffer_rd, queue, channels);
-    if (buffer_rd >= sz_mem ) buffer_rd = 0;
+    buffer_rd = decoder(buffer, buffer_rd, queue, channels);
+
+    size_t sz_mem = getBufferSize();
+    if (buffer_rd >= sz_mem ) {
+        readLater();    // trigger buffer fill
+        buffer_rd = 0;
+    }
 
 	// transmit them:
     chan = 0;
@@ -567,28 +854,13 @@ void  AudioPlayWav::update(void)
 		AudioStream::release(queue[chan]);
 	} while (++chan < channels);
 
-    //Serial.printf("%d\n",data_length);
+
     --data_length;
-	if (data_length <= 0) stop();
-
-	// trigger buffer fill if we just emptied it
-    if ( buffer_rd == 0)
-    {
-        readLater();
+	if (data_length <= 0) {
+        SPLN("Stop: No Data anymore.");
+        stop();
     }
-
 }
-
-
-bool AudioPlayWav::addMemoryForRead(__attribute__ ((unused)) size_t mult)
-{
-#if !defined(KINETISL)
-    if (mult < 1) mult = 1;
-	_sz_mem_additional = mult;
-#endif // !defined(KINETISL)
-	return true;
-}
-
 
 #define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
 
@@ -634,4 +906,204 @@ uint32_t AudioPlayWav::positionMillis(void)
     startInt(irq);
     return ret;
 }
+
+#endif // !defined(KINETISL)
+
+//----------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------
+#if 0 && !defined(KINETISL)
+
+typedef struct
+{
+    tFileHeader fileHeader;
+    struct {
+        tDataHeader dataHeader;
+        tFmtHeaderEx fmtHeader;
+    } file;
+    tDataHeader dataHeader;
+
+} __attribute__ ((__packed__)) tWaveFileHeader;
+
+void AudioRecordWav::begin(void)
+{
+    state = APW_STATE_STOP;
+    my_instance = _AudioRecordWavInstances;
+    ++_AudioRecordWavInstances;
+}
+
+void AudioRecordWav::end(void)
+{
+	stop();
+    --_AudioRecordWavInstances;
+}
+
+void AudioRecordWav::stop(void)
+{
+    state = APW_STATE_STOP;
+    SPLN("\r\nSTOP!");
+
+    if (wavfile) writeHeader(wavfile);
+
+    bool irq = stopInt();
+    close();
+    startInt(irq);
+
+    stopUsingSPI();
+}
+
+void AudioRecordWav::pause(const bool pause)
+{
+    bool irq = stopInt();
+    if (pause && state != APW_STATE_PAUSED) {
+        if (wavfile) writeHeader(wavfile);
+    }
+
+    AudioBaseWav::pause(pause);
+    startInt(irq);
+}
+
+bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bool paused)
+{
+    tWaveFileHeader fileHeader;
+    bool irq, ok;
+    size_t wr;
+
+    stop();
+    if (!file) return false;
+    if (fmt != APW_16BIT_SIGNED) return false;
+
+    dataFmt = APW_NONE;
+    channels = 0;
+    total_length = data_length = data_length_old = 0;
+
+    initWrite(file);
+    startUsingSPI();
+
+    //write a dummy fileheader and check if it was successful:
+    memset(&fileHeader, 0xff, sizeof(fileHeader));
+    irq = stopInt();
+
+    ok = seek(0);
+    wr = write(&fileHeader, sizeof(fileHeader));
+    flush();
+    startInt(irq);
+    if (!ok || wr < sizeof(fileHeader)) return false;
+
+    this->channels = channels;
+    #if !defined(__IMXRT1062__)
+    sample_rate = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
+    #else
+    sample_rate = AUDIO_SAMPLE_RATE_EXACT;
+    #endif
+    dataFmt = fmt;
+
+    //[..]
+
+    return true;
+}
+
+bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused)
+{
+    stop();
+    startUsingSPI();
+
+    bool irq = stopInt();
+    File file = SD.open(filename, FILE_WRITE_BEGIN);
+    startInt(irq);
+    if (!file) return false;
+    return record(file, fmt, channels, paused);
+
+}
+
+bool AudioRecordWav::writeHeader(File file)
+{
+
+    if (state == APW_STATE_RECORD) return false;
+    if (data_length == data_length_old) return false;
+    data_length_old = data_length;
+
+    bool ok, irq;
+    size_t pos, sz, wr;
+
+    irq = stopInt();
+    pos = position();
+    flush(); //TODO: is a flush needed?
+    if (pos > 0) ok = seek(0); else ok = true;
+    startInt(irq);
+    if (!ok) return false;
+
+    sz = size();
+    if (sz == 0) sz = sizeof(tWaveFileHeader);
+
+    tWaveFileHeader header;
+
+    header.fileHeader.id = cRIFF;
+    header.fileHeader.len = sz - sizeof(tDataHeader);
+    header.fileHeader.riffType = cWAVE;
+    header.file.dataHeader.chunkID = cFMT;
+    header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
+
+    if (channels <= 2) // TODO: u-law (fomatTag = 7)
+        header.file.fmtHeader.wFormatTag = 1;
+    else
+        header.file.fmtHeader.wFormatTag = 65534;
+
+    header.file.fmtHeader.wChannels = channels;
+    header.file.fmtHeader.dwSamplesPerSec = sample_rate;
+    header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
+    header.file.fmtHeader.wBlockAlign = 0;
+    header.file.fmtHeader.wBitsPerSample = bytes * 8;
+    header.file.fmtHeader.cbSize = 0;
+
+    header.dataHeader.chunkID = cDATA;
+    header.dataHeader.chunkSize = sz - sizeof(tWaveFileHeader);
+
+    irq = stopInt();
+    wr = write(&header, sizeof(header));
+    flush(); //TODO: is a flush needed?
+    if (pos > 0) ok = seek(pos); else ok = true;
+    startInt(irq);
+    if (!ok || wr < sizeof(header)) return false;
+
+    return true;
+}
+
+__attribute__((hot))
+void  AudioRecordWav::update(void)
+{
+    if (state != APW_STATE_RECORD) return;
+
+    unsigned int chan;
+
+	// allocate the audio blocks
+    audio_block_t *queue[channels];
+    chan = 0;
+    do
+    {
+		queue[chan] = AudioStream::receiveReadOnly();
+		if ( (queue[chan] == nullptr) ) {
+			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
+			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			SPLN("WaveRecord stopped: Not enough AudioMemory().");
+			stop();
+            return;
+		}
+	} while (++chan < channels);
+
+
+    //todo[...]
+
+    total_length += channels * bytes;
+    ++data_length;
+
+	// release them:
+    chan = 0;
+    do
+    {
+		AudioStream::release(queue[chan]);
+	} while (++chan < channels);
+
+}
+
 #endif // !defined(KINETISL)

@@ -5,11 +5,24 @@ Extended version
 - Sample rate agnostic
 - (up to) 8 Channels / 8 or 16Bit
 - delay() after start not needed anymore
-- every audio block size
+- all audio block sizes
 - interleaved reads: only one file access on each audio-cycle
 - lastErr(void) returns last error
 - addMemoryForRead() adds memory
-- syncronized start
+- synchronized start
+- optional: can use EventResponder - no reads during interrupt
+
+## Working Formats:
+- n channel 8 bit unsigned *.wav
+- n channel u-law *.wav
+- n channel 16 bit signed *.wav
+- n channel 8 bit signed *.aiff
+- n channel 8 bit unsigned *.aifc
+- n channel u-law *.aifc (Apple, non ccitt)
+- n channel 16 bit signed *.aiff
+- n channel 8 bit signed, unsigned or u-law RAW
+- n channel 16 bit signed, unsigned or 16 bit big-endian signed RAW
+
 
 
 Example wave files taken from here:
