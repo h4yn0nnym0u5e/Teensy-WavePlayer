@@ -381,5 +381,7 @@ private:
     virtual void update(void);
     void begin(void);
     void end(void);
+    void pause(const bool pause);
+    bool headerWritten;
 };
 #endif // defined(KINETISL)
