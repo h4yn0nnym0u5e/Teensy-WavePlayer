@@ -546,7 +546,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     buffer_rd = total_length = data_length = 0;
     channelmask = bytes = 0;
 
-    last_err = APW_ERR_FILE;
+    last_err = ERR_FILE;
     if (!wavfile) return false;
 
     irq = stopInt();
@@ -563,7 +563,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     }
     startInt(irq);
 
-    last_err = APW_ERR_FORMAT;
+    last_err = ERR_FORMAT;
     if ( dataFmt != APW_NONE) {
         // ---------- RAW ----------------------------
         //Serial.println("Format: RAW");
@@ -747,11 +747,11 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     int8_t* buffer =  createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
-		last_err = APW_ERR_OUT_OF_MEMORY;
+		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
-    last_err = APW_ERR_OK;
+    last_err = ERR_OK;
 
     setPadding(0);
 
@@ -827,7 +827,7 @@ void  AudioPlayWav::update(void)
 		queue[chan] = AudioStream::allocate();
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
-			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			last_err = ERR_NO_AUDIOBLOCKS;
 			SPLN("Waveplayer stopped: Not enough AudioMemory().");
 			stop();
             return;
@@ -972,14 +972,14 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     stop();
     
     if (!file) {
-        last_err = APW_ERR_FILE;
+        last_err = ERR_FILE;
         return false;
     }
+    
+    last_err = ERR_FORMAT;        
+    if (channels > _AudioRecordWav_MaxChannels) return false;
     //Allow APW_16BIT_SIGNED only for now... more formats to come
-    if (fmt != APW_16BIT_SIGNED) {
-        last_err = APW_ERR_FORMAT;        
-        return false;
-    }
+    if (fmt != APW_16BIT_SIGNED) return false;    
 
     dataFmt = APW_NONE;
     sample_rate = channels = 0;
@@ -998,7 +998,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     startInt(irq);
     
     if (!ok || wr < sizeof(fileHeader)) {
-        last_err = APW_ERR_FILE;
+        last_err = ERR_FILE;
         return false;
     }
 
@@ -1011,7 +1011,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     #endif    
     //[..]
     
-    last_err = APW_ERR_OK;
+    last_err = ERR_OK;
     return true;
 }
 
@@ -1031,14 +1031,14 @@ bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int c
 bool AudioRecordWav::writeHeader(File file)
 {
 
-    if (state == STATE_RUNNING) return false;
+    if (state == STATE_RUNNING) return false;    
     if (data_length == data_length_old) return false;
     data_length_old = data_length;
 
     bool ok, irq;
     size_t pos, sz, wr;
 
-    last_err = APW_ERR_FILE;
+    last_err = ERR_FILE;
     
     irq = stopInt();
     pos = position();
@@ -1057,7 +1057,7 @@ bool AudioRecordWav::writeHeader(File file)
     header.fileHeader.riffType = cWAVE;
     header.file.dataHeader.chunkID = cFMT;
     header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
-
+    
     if (channels <= 2) // TODO: u-law (fomatTag = 7)
         header.file.fmtHeader.wFormatTag = 1;
     else
@@ -1080,7 +1080,7 @@ bool AudioRecordWav::writeHeader(File file)
     startInt(irq);
     if (!ok || wr < sizeof(header)) return false;
     
-    last_err = APW_ERR_OK;
+    last_err = ERR_OK;
     return true;
 }
 
@@ -1099,7 +1099,7 @@ void  AudioRecordWav::update(void)
 		queue[chan] = AudioStream::receiveReadOnly();
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
-			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			last_err = ERR_NO_AUDIOBLOCKS;
 			SPLN("WaveRecord stopped: Not enough AudioMemory().");
 			stop();
             return;
