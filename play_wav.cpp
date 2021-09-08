@@ -813,7 +813,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-    if (state != APW_STATE_PLAY) return;
+    if ( state != APW_STATE_PLAY ) return;
 
     unsigned int chan;
 
@@ -926,29 +926,7 @@ void AudioRecordWav::end(void)
 
 void AudioRecordWav::stop(void)
 {
-    state = APW_STATE_STOP;
-    SPLN("\r\nSTOP!");
-
-    if (wavfile) writeHeader(wavfile);
-
-    bool irq = stopInt();
-    close();
-    startInt(irq);
-
-    stopUsingSPI();
 }
-
-void AudioRecordWav::pause(const bool pause)
-{
-    bool irq = stopInt();
-    if (pause && state != APW_STATE_PAUSED) {
-        if (wavfile) writeHeader(wavfile);
-    }
-
-    AudioBaseWav::pause(pause);
-    startInt(irq);
-}
-
 
 typedef struct
 {
@@ -965,25 +943,19 @@ bool AudioRecordWav::writeHeader(File file)
 {
 
     if (state == APW_STATE_RECORD) return false;
-    if (headerWritten) return false;
 
-    // Assume written now, regardless of possible errors:
-    headerWritten = true;
-
-    bool ok, irq;
+    bool result, ok, irq;
     size_t pos, sz, wr;
 
     irq = stopInt();
     pos = position();
-    flush(); //TODO: is a flush needed?
-    if (pos > 0) ok = seek(0); else ok = true;
+    flush();
+    ok = seek(0);
     startInt(irq);
     if (!ok) return false;
 
     sz = size();
     if (sz == 0) sz = sizeof(tWaveFileHeader);
-
-    int sr = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
 
     tWaveFileHeader header;
 
@@ -999,8 +971,8 @@ bool AudioRecordWav::writeHeader(File file)
         header.file.fmtHeader.wFormatTag = 65534;
 
     header.file.fmtHeader.wChannels = channels;
-    header.file.fmtHeader.dwSamplesPerSec = sr;
-    header.file.fmtHeader.dwAvgBytesPerSec = sr * bytes * channels;
+    header.file.fmtHeader.dwSamplesPerSec = sample_rate;
+    header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
     header.file.fmtHeader.wBlockAlign = 0;
     header.file.fmtHeader.wBitsPerSample = bytes * 8;
     header.file.fmtHeader.cbSize = 0;
@@ -1010,20 +982,11 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     wr = write(&header, sizeof(header));
-    flush(); //TODO: is a flush needed?
-    if (pos > 0) ok = seek(pos); else ok = true;
+    ok = seek(pos);
     startInt(irq);
     if (!ok || wr < sizeof(header)) return false;
 
     return true;
-}
-
-__attribute__((hot))
-void  AudioPlayWav::update(void)
-{
-    if (state != APW_STATE_RECORD) return;
-    //[...]
-    headerWritten = false;
 }
 
 #endif // !defined(KINETISL)
