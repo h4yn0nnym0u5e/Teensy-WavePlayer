@@ -354,7 +354,7 @@ private:
 
 /*********************************************************************************************************/
 
-#if !defined(KINETISL)
+#if 0 && !defined(KINETISL)
 class AudioRecordWav : public AudioBaseWav, public AudioStream
 {
 public:

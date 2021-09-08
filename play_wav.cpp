@@ -371,7 +371,7 @@ bool AudioPlayWav::play(File file, const bool paused)
 
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
-    stop();    
+    stop();
     startUsingSPI();
 
     bool irq = stopInt();
@@ -912,7 +912,7 @@ uint32_t AudioPlayWav::positionMillis(void)
 //----------------------------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------------------------
-#if !defined(KINETISL)
+#if 0 && !defined(KINETISL)
 
 typedef struct
 {
@@ -972,7 +972,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     stop();
     if (!file) return false;
     if (fmt != APW_16BIT_SIGNED) return false;
-    
+
     dataFmt = APW_NONE;
     channels = 0;
     total_length = data_length = data_length_old = 0;
@@ -993,7 +993,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     this->channels = channels;
     #if !defined(__IMXRT1062__)
     sample_rate = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
-    #else 
+    #else
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
     #endif
     dataFmt = fmt;
@@ -1013,7 +1013,7 @@ bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int c
     startInt(irq);
     if (!file) return false;
     return record(file, fmt, channels, paused);
-    
+
 }
 
 bool AudioRecordWav::writeHeader(File file)
