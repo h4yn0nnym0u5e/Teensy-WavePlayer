@@ -47,20 +47,11 @@ enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
                   APW_16BIT_SIGNED, APW_16BIT_SIGNED_BIGENDIAN,
                   APW_NONE};
 
-#define APW_ERR_OK              0 // no Error
-#define APW_ERR_FORMAT          1 // not supported Format
-#define APW_ERR_FILE   			2 // File not readable (does it exist?)
-#define APW_ERR_OUT_OF_MEMORY   3 // Not enough dynamic memory available
-#define APW_ERR_NO_AUDIOBLOCKS  4 // insufficient available audio blocks
-
-
+enum APW_ERR { ERR_OK = 0, ERR_FORMAT = 1, ERR_FILE = 2, ERR_OUT_OF_MEMORY = 3, ERR_NO_AUDIOBLOCKS = 4};
 
 /*********************************************************************************************************/
 
-#define APW_STATE_STOP    0
-#define APW_STATE_PAUSED  1
-#define APW_STATE_PLAY    2
-#define APW_STATE_RECORD  APW_STATE_PLAY
+enum APW_STATE {STATE_STOP, STATE_PAUSED, STATE_RUNNING};
 
 #define xDEBUG_PRINT_PLAYWAV
 #if defined(DEBUG_PRINT_PLAYWAV)
@@ -83,6 +74,7 @@ enum APW_FORMAT { APW_8BIT_UNSIGNED=0, APW_8BIT_SIGNED, APW_ULAW,
 #define USE_EVENTRESPONDER_PLAYWAV 0
 #else
 	const int _AudioPlayWav_MaxChannels = 16;
+    const int _AudioRecordWav_MaxChannels = 16;
 #ifdef ENABLE_EVENTRESPONDER_PLAYWAV
 #define USE_EVENTRESPONDER_PLAYWAV 1
 #endif
@@ -113,8 +105,8 @@ class AudioBaseWav
 public:
 	void pause(bool pause);
     void togglePause(void);
-	bool isPaused(void) {return (state == APW_STATE_PAUSED);};
-	bool isStopped(void) {return (state == APW_STATE_STOP);};
+	bool isPaused(void) {return (state == STATE_PAUSED);};
+	bool isStopped(void) {return (state == STATE_STOP);};
 	inline size_t getBufferSize() { return sz_mem; } //!< return size of buffer
 	inline size_t position() { return wavfile.position(); }//!< return file position
     operator bool() {return wavfile;}
@@ -136,7 +128,7 @@ public:
 	uint32_t numChannels(void) {return channels;};
 	uint32_t sampleRate(void) {return sample_rate;};
     uint8_t instanceID(void) {return my_instance;};
-    uint8_t lastErr(void) {return last_err;};
+    uint8_t lastErr(void) {return (int)last_err;};
     File file(void) {return wavfile;};
 	//--------------------------------------------------------------------------------------------------
 
@@ -312,8 +304,8 @@ private:
 	uint8_t my_instance;                // instance id
     bool usingSPI = false;
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
-	uint8_t state = APW_STATE_STOP;	    // play status (stop, pause, playing)
-    uint8_t last_err = APW_ERR_OK;
+	APW_STATE state = STATE_STOP;	    // play status (stop, pause, playing)
+    APW_ERR last_err = ERR_OK;
 	uint8_t padding;				    //!< value to pad buffer at EOF
 
 };
@@ -346,7 +338,7 @@ private:
     virtual void update(void);
     void begin(void);
 	void end(void);
-    bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState );
+    bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState );
     size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
@@ -354,7 +346,7 @@ private:
 
 /*********************************************************************************************************/
 
-#if 0 && !defined(KINETISL)
+#if !defined(KINETISL)
 class AudioRecordWav : public AudioBaseWav, public AudioStream
 {
 public:

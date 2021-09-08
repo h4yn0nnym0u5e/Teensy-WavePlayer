@@ -92,22 +92,22 @@ bool AudioBaseWav::isRunning(void)
 {
     yield();
     bool irq = stopInt();
-    uint8_t s = state == APW_STATE_PLAY;
+    bool s = state == STATE_RUNNING;
     startInt(irq);
     return s;
 }
 
 void AudioBaseWav::pause(const bool pause)
 {
-    if (state == APW_STATE_STOP) return;
+    if (state == STATE_STOP) return;
     bool irq = stopInt();
     if (pause)
     {
-        state = APW_STATE_PAUSED;
+        state = STATE_PAUSED;
         stopUsingSPI();
     } else {
         startUsingSPI();
-        state = APW_STATE_PLAY;
+        state = STATE_RUNNING;
     }
     startInt(irq);
 }
@@ -115,7 +115,7 @@ void AudioBaseWav::pause(const bool pause)
 void AudioBaseWav::togglePause(void)
 {
     bool irq = stopInt();
-    pause(state == APW_STATE_PLAY);
+    pause(state == STATE_RUNNING);
     startInt(irq);
 }
 
@@ -338,7 +338,7 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
 //----------------------------------------------------------------------------------------------------
 void AudioPlayWav::begin(void)
 {
-    state = APW_STATE_STOP;
+    state = STATE_STOP;
 #if !defined(KINETISL)
     my_instance = _AudioPlayWavInstances;
     ++_AudioPlayWavInstances;
@@ -361,7 +361,7 @@ bool AudioPlayWav::play(File file, const bool paused)
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader(APW_NONE, 0, 0,  paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(APW_NONE, 0, 0,  paused ? STATE_PAUSED : STATE_RUNNING ))
     {
         stop();
         return false;
@@ -388,7 +388,7 @@ bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8
     initRead(file);
     startUsingSPI();
 
-    if (!readHeader(fmt, sampleRate, number_of_channels, paused ? APW_STATE_PAUSED : APW_STATE_PLAY ))
+    if (!readHeader(fmt, sampleRate, number_of_channels, paused ? STATE_PAUSED : STATE_RUNNING ))
     {
         stop();
         return false;
@@ -411,7 +411,7 @@ bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint32_t sample
 void AudioPlayWav::stop(void)
 {
 
-    state = APW_STATE_STOP;
+    state = STATE_STOP;
 	SPLN("\r\nSTOP!");
     bool irq = stopInt();
     close();
@@ -532,7 +532,7 @@ typedef struct {
 }  __attribute__ ((__packed__)) taifcCommonChunk;
 
 
-bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, int newState)
+bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState)
 {
     size_t sz_frame, rd;
     tFileHeader fileHeader;
@@ -546,7 +546,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     buffer_rd = total_length = data_length = 0;
     channelmask = bytes = 0;
 
-    last_err = APW_ERR_FILE;
+    last_err = ERR_FILE;
     if (!wavfile) return false;
 
     irq = stopInt();
@@ -563,7 +563,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     }
     startInt(irq);
 
-    last_err = APW_ERR_FORMAT;
+    last_err = ERR_FORMAT;
     if ( dataFmt != APW_NONE) {
         // ---------- RAW ----------------------------
         //Serial.println("Format: RAW");
@@ -747,11 +747,11 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     int8_t* buffer =  createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
-		last_err = APW_ERR_OUT_OF_MEMORY;
+		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
-    last_err = APW_ERR_OK;
+    last_err = ERR_OK;
 
     setPadding(0);
 
@@ -816,7 +816,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-    if (state != APW_STATE_PLAY) return;
+    if (state != STATE_RUNNING) return;
 
     unsigned int chan;
 
@@ -827,7 +827,7 @@ void  AudioPlayWav::update(void)
 		queue[chan] = AudioStream::allocate();
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
-			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			last_err = ERR_NO_AUDIOBLOCKS;
 			SPLN("Waveplayer stopped: Not enough AudioMemory().");
 			stop();
             return;
@@ -912,7 +912,7 @@ uint32_t AudioPlayWav::positionMillis(void)
 //----------------------------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------------------------
-#if 0 && !defined(KINETISL)
+#if !defined(KINETISL)
 
 typedef struct
 {
@@ -927,7 +927,7 @@ typedef struct
 
 void AudioRecordWav::begin(void)
 {
-    state = APW_STATE_STOP;
+    state = STATE_STOP;
     my_instance = _AudioRecordWavInstances;
     ++_AudioRecordWavInstances;
 }
@@ -940,8 +940,8 @@ void AudioRecordWav::end(void)
 
 void AudioRecordWav::stop(void)
 {
-    state = APW_STATE_STOP;
-    SPLN("\r\nSTOP!");
+    state = STATE_STOP;
+    SPLN("\r\nRecording STOP!");
 
     if (wavfile) writeHeader(wavfile);
 
@@ -955,7 +955,7 @@ void AudioRecordWav::stop(void)
 void AudioRecordWav::pause(const bool pause)
 {
     bool irq = stopInt();
-    if (pause && state != APW_STATE_PAUSED) {
+    if (pause && state != STATE_PAUSED) {
         if (wavfile) writeHeader(wavfile);
     }
 
@@ -970,13 +970,21 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     size_t wr;
 
     stop();
-    if (!file) return false;
-    if (fmt != APW_16BIT_SIGNED) return false;
+    
+    if (!file) {
+        last_err = ERR_FILE;
+        return false;
+    }
+    
+    last_err = ERR_FORMAT;        
+    if (channels > _AudioRecordWav_MaxChannels) return false;
+    //Allow APW_16BIT_SIGNED only for now... more formats to come
+    if (fmt != APW_16BIT_SIGNED) return false;    
 
     dataFmt = APW_NONE;
-    channels = 0;
+    sample_rate = channels = 0;
     total_length = data_length = data_length_old = 0;
-
+    
     initWrite(file);
     startUsingSPI();
 
@@ -988,18 +996,22 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     wr = write(&fileHeader, sizeof(fileHeader));
     flush();
     startInt(irq);
-    if (!ok || wr < sizeof(fileHeader)) return false;
+    
+    if (!ok || wr < sizeof(fileHeader)) {
+        last_err = ERR_FILE;
+        return false;
+    }
 
+    dataFmt = fmt;
     this->channels = channels;
     #if !defined(__IMXRT1062__)
     sample_rate = ((int)sample_rate / 20) * 20; //round (for Teensy 3.x)
     #else
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
-    #endif
-    dataFmt = fmt;
-
+    #endif    
     //[..]
-
+    
+    last_err = ERR_OK;
     return true;
 }
 
@@ -1011,7 +1023,7 @@ bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int c
     bool irq = stopInt();
     File file = SD.open(filename, FILE_WRITE_BEGIN);
     startInt(irq);
-    if (!file) return false;
+    
     return record(file, fmt, channels, paused);
 
 }
@@ -1019,13 +1031,15 @@ bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int c
 bool AudioRecordWav::writeHeader(File file)
 {
 
-    if (state == APW_STATE_RECORD) return false;
+    if (state == STATE_RUNNING) return false;    
     if (data_length == data_length_old) return false;
     data_length_old = data_length;
 
     bool ok, irq;
     size_t pos, sz, wr;
 
+    last_err = ERR_FILE;
+    
     irq = stopInt();
     pos = position();
     flush(); //TODO: is a flush needed?
@@ -1043,7 +1057,7 @@ bool AudioRecordWav::writeHeader(File file)
     header.fileHeader.riffType = cWAVE;
     header.file.dataHeader.chunkID = cFMT;
     header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
-
+    
     if (channels <= 2) // TODO: u-law (fomatTag = 7)
         header.file.fmtHeader.wFormatTag = 1;
     else
@@ -1065,14 +1079,15 @@ bool AudioRecordWav::writeHeader(File file)
     if (pos > 0) ok = seek(pos); else ok = true;
     startInt(irq);
     if (!ok || wr < sizeof(header)) return false;
-
+    
+    last_err = ERR_OK;
     return true;
 }
 
 __attribute__((hot))
 void  AudioRecordWav::update(void)
 {
-    if (state != APW_STATE_RECORD) return;
+    if (state != STATE_RUNNING) return;
 
     unsigned int chan;
 
@@ -1084,7 +1099,7 @@ void  AudioRecordWav::update(void)
 		queue[chan] = AudioStream::receiveReadOnly();
 		if ( (queue[chan] == nullptr) ) {
 			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
-			last_err = APW_ERR_NO_AUDIOBLOCKS;
+			last_err = ERR_NO_AUDIOBLOCKS;
 			SPLN("WaveRecord stopped: Not enough AudioMemory().");
 			stop();
             return;
