@@ -981,13 +981,14 @@ void AudioRecordWav::pause(const bool pause)
     startInt(irq);
 }
 
-bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bool paused)
+bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels, bool paused)
 {
     tWaveFileHeader fileHeader;
     bool irq, ok;
     size_t wr;
 
-    stop();
+    state = STATE_STOP;
+    //stop();
 
     if (!file) {
         last_err = ERR_FILE;
@@ -1000,7 +1001,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     if (fmt != APW_16BIT_SIGNED) return false;
 
     dataFmt = APW_NONE;
-    sz_frame = sample_rate = channels = 0;
+    sz_mem = sz_frame = sample_rate = channels = 0;
     data_length = data_length_old = 0;
 
     initWrite(file);
@@ -1021,17 +1022,28 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
     }
 
     dataFmt = fmt;
-    this->channels = channels;
+    channels = numchannels;
+    bytes = 2; //TODO!
     #if !defined(__IMXRT1062__)
     sample_rate = ((int)(AUDIO_SAMPLE_RATE_EXACT) / 20) * 20; //round (for Teensy 3.x)
     #else
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
     #endif
 
-    sz_frame = AUDIO_BLOCK_SAMPLES * channels;
+    switch(dataFmt)
+    {
+        case APW_16BIT_SIGNED: 
+            bytes = 2;
+            encoder = &encode_16bit;
+            break;
+        default:
+            return false;
+    }
+
+    sz_frame = AUDIO_BLOCK_SAMPLES * channels * bytes;
 
     //calculate the needed buffer memory:
-    size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
+    sz_mem = _AudioRecordWavInstances * sz_frame * bytes;
     sz_mem *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -1044,8 +1056,6 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
 	}
     */
 
-    encoder = &encode_16bit; //Todo !!
-
     last_err = ERR_OK;
     state = paused? STATE_PAUSED : STATE_RUNNING;
     return true;
@@ -1053,7 +1063,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int channels, bo
 
 bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused)
 {
-    stop();
+    stop();    
     startUsingSPI();
 
     bool irq = stopInt();
@@ -1127,7 +1137,8 @@ void  AudioRecordWav::update(void)
 
     unsigned int chan;
     size_t wr;
-    int8_t buffer[sz_mem]; //todo: remove that later and use malloc'd mem
+    size_t sz = sz_frame * bytes;
+    int8_t buf[sz]; //todo: remove that later and use malloc'd mem
 
     chan = 0;
     do
@@ -1137,13 +1148,13 @@ void  AudioRecordWav::update(void)
 	} while (++chan < _AudioRecordWav_MaxChannels);
 
     if (state != STATE_RUNNING) goto noRecording;
+    
+    encoder(buf, 0, queue, channels);
 
-    encoder(buffer, 0, queue, channels);
-
-    wr = write(&buffer, sz_mem);
-    if (wr < sz_mem) { 
+    wr = write(&buf, sz);
+    if (wr < sz) { 
         stop(); //Disk full, max filesize reached, SD Card removed etc.
-        last_error = ERR_FILE;
+        last_err = ERR_FILE;
         goto noRecording;
     }
     
