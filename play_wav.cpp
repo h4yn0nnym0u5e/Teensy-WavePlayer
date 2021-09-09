@@ -490,7 +490,7 @@ typedef struct
 typedef struct {
   unsigned long chunkID;
   unsigned long chunkSize;
-} tDataHeader;
+} __attribute__ ((__packed__)) tDataHeader;
 
 
 //AIFF, AIFC:
@@ -921,7 +921,7 @@ typedef struct
         tDataHeader dataHeader;
         //tFmtHeader fmtHeader;
         tFmtHeaderEx fmtHeader;
-    } file;
+    } __attribute__ ((__packed__)) file;
     tDataHeader dataHeader;
 
 } __attribute__ ((__packed__)) tWaveFileHeader;
@@ -1041,8 +1041,6 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
         return false;
     }
 
-
-
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
 
     //calculate the needed buffer memory:
@@ -1117,7 +1115,7 @@ bool AudioRecordWav::writeHeader(File file)
     header.file.fmtHeader.wChannels = channels;
     header.file.fmtHeader.dwSamplesPerSec = sample_rate;
     header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
-    header.file.fmtHeader.wBlockAlign = bytes * channels;
+    header.file.fmtHeader.wBlockAlign = bytes * 8 * channels;
     header.file.fmtHeader.wBitsPerSample = bytes * 8;
     header.file.fmtHeader.cbSize = 0;
 
