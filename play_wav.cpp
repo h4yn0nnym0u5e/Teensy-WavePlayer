@@ -50,7 +50,7 @@ static const uint8_t _sz_mem_additional = 1;
 static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
-static audio_block_t zeroblock = {0};
+static const audio_block_t zeroblock = {0};
 #endif // defined(KINETISL)
 
 
@@ -469,7 +469,7 @@ typedef struct
   unsigned long  dwAvgBytesPerSec;
   unsigned short wBlockAlign;
   unsigned short wBitsPerSample;
-	unsigned short cbSize;
+  unsigned short cbSize;
 } __attribute__ ((__packed__)) tFmtHeaderEx;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
@@ -919,6 +919,7 @@ typedef struct
     tFileHeader fileHeader;
     struct {
         tDataHeader dataHeader;
+        //tFmtHeader fmtHeader;
         tFmtHeaderEx fmtHeader;
     } file;
     tDataHeader dataHeader;
@@ -936,7 +937,8 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
     do {
         unsigned int chan = 0;
         do {
-            *p++ = queue[chan]->data[i];
+            *p = queue[chan]->data[i];
+            p++;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return (int8_t*)p - buffer;
@@ -996,13 +998,31 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     }
 
     last_err = ERR_FORMAT;
-    if (channels > _AudioRecordWav_MaxChannels) return false;
+    if (numchannels == 0 || numchannels > _AudioRecordWav_MaxChannels) return false;
     //Allow APW_16BIT_SIGNED only for now... more formats to come
     if (fmt != APW_16BIT_SIGNED) return false;
 
-    dataFmt = APW_NONE;
-    sz_mem = sz_frame = sample_rate = channels = 0;
+    sz_mem = sz_frame = bytes = sample_rate = 0;
     data_length = data_length_old = 0;
+
+    dataFmt = fmt;
+    channels = numchannels;
+
+    #if !defined(__IMXRT1062__)
+    sample_rate = ((int)(AUDIO_SAMPLE_RATE_EXACT) / 20) * 20; //round (for Teensy 3.x)
+    #else
+    sample_rate = AUDIO_SAMPLE_RATE_EXACT;
+    #endif
+
+    switch(dataFmt)
+    {
+        case APW_16BIT_SIGNED:
+            bytes = 2;
+            encoder = &encode_16bit;
+            break;
+        default:
+            return false;
+    }
 
     initWrite(file);
     startUsingSPI();
@@ -1021,26 +1041,9 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
         return false;
     }
 
-    dataFmt = fmt;
-    channels = numchannels;
-    bytes = 2; //TODO!
-    #if !defined(__IMXRT1062__)
-    sample_rate = ((int)(AUDIO_SAMPLE_RATE_EXACT) / 20) * 20; //round (for Teensy 3.x)
-    #else
-    sample_rate = AUDIO_SAMPLE_RATE_EXACT;
-    #endif
 
-    switch(dataFmt)
-    {
-        case APW_16BIT_SIGNED: 
-            bytes = 2;
-            encoder = &encode_16bit;
-            break;
-        default:
-            return false;
-    }
 
-    sz_frame = AUDIO_BLOCK_SAMPLES * channels * bytes;
+    sz_frame = AUDIO_BLOCK_SAMPLES * channels;
 
     //calculate the needed buffer memory:
     sz_mem = _AudioRecordWavInstances * sz_frame * bytes;
@@ -1063,7 +1066,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
 bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused)
 {
-    stop();    
+    stop();
     startUsingSPI();
 
     bool irq = stopInt();
@@ -1093,6 +1096,8 @@ bool AudioRecordWav::writeHeader(File file)
     startInt(irq);
     if (!ok) return false;
 
+//Somewhere is is a bug. WinAMp plays it, other players not.
+
     sz = size();
     if (sz == 0) sz = sizeof(tWaveFileHeader);
 
@@ -1112,7 +1117,7 @@ bool AudioRecordWav::writeHeader(File file)
     header.file.fmtHeader.wChannels = channels;
     header.file.fmtHeader.dwSamplesPerSec = sample_rate;
     header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
-    header.file.fmtHeader.wBlockAlign = 0;
+    header.file.fmtHeader.wBlockAlign = bytes * channels;
     header.file.fmtHeader.wBitsPerSample = bytes * 8;
     header.file.fmtHeader.cbSize = 0;
 
@@ -1144,29 +1149,33 @@ void  AudioRecordWav::update(void)
     do
     {
 		queue[chan] = AudioStream::receiveReadOnly(chan);
-        if ( (queue[chan] == nullptr) ) queue[chan] = &zeroblock;
+        if (!queue[chan]) {     
+           queue[chan] = (audio_block_t*)&zeroblock; 
+        }
 	} while (++chan < _AudioRecordWav_MaxChannels);
 
     if (state != STATE_RUNNING) goto noRecording;
-    
+
     encoder(buf, 0, queue, channels);
 
-    wr = write(&buf, sz);
-    if (wr < sz) { 
+    wr = write(&buf, sz );
+    if (wr < sz) {
         stop(); //Disk full, max filesize reached, SD Card removed etc.
         last_err = ERR_FILE;
         goto noRecording;
     }
-    
+
     ++data_length;
 
 noRecording:
-	// release queues
+
+	// release queues    
     chan = 0;
     do
-    {
-		if (queue[chan] != &zeroblock)
-            AudioStream::release(queue[chan]);
+    {		
+        if (queue[chan] != (audio_block_t*)&zeroblock)        
+            AudioStream::release(queue[chan]);      
+        queue[chan] = nullptr; // < why is this needed?
 	} while (++chan < _AudioRecordWav_MaxChannels);
 
 }
