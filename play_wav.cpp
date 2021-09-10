@@ -292,7 +292,7 @@ void AudioBaseWav::writeLater(void) //!< from interrupt: request to write the bu
         write(buffer,sz_mem);		 // write immediately
 
 }
-        
+
 #if USE_EVENTRESPONDER_PLAYWAV
 bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem in EventResponder, otherwise accesses happen under interrupt
 #endif
@@ -571,7 +571,11 @@ void AudioPlayWav::stop(void)
 static const uint32_t cRIFF = 0x46464952; //'RIFF'
 static const uint32_t cWAVE = 0x45564157; //'WAVE'
 static const uint32_t cFMT  = 0x20746D66; //'fmt '
+static const uint32_t cFACT = 0x74636166; //'fact'
 static const uint32_t cDATA = 0x61746164; //'data'
+static const char cGUID[14] = {'\x00','\x00','\x00','\x00','\x10','\x00',
+                    '\x80','\x00','\x00','\xAA','\x00','\x38','\x9B','\x71'};
+
 
 typedef struct {
   unsigned long id;
@@ -602,7 +606,7 @@ typedef struct
   unsigned long  dwAvgBytesPerSec;
   unsigned short wBlockAlign;
   unsigned short wBitsPerSample;
-  unsigned short cbSize;
+  //unsigned short cbSize;
 } __attribute__ ((__packed__)) tFmtHeaderEx;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
@@ -615,9 +619,12 @@ typedef struct
     unsigned short wValidBitsPerSample;
     unsigned short wSamplesPerBlock;
     unsigned short wReserved;
-  } Samples;
+  };
   unsigned long dwChannelMask;
-  //GUID         SubFormat;
+  struct {
+    unsigned short  format;
+    char guid[14];
+  } __attribute__ ((__packed__));
 } __attribute__ ((__packed__)) tFmtHeaderExtensible;
 
 typedef struct {
@@ -1055,9 +1062,13 @@ typedef struct
         //tFmtHeader fmtHeader;
         tFmtHeaderEx fmtHeader;
     } __attribute__ ((__packed__)) file;
-    tDataHeader dataHeader;
-
 } __attribute__ ((__packed__)) tWaveFileHeader;
+
+typedef struct {
+        tDataHeader dataHeader;
+        uint32_t dwSampleLength;
+} __attribute__ ((__packed__)) tfactChunk;
+
 
 //----------------------------------------------------------------------------------------------------
 // 8 bit unsigned:
@@ -1070,7 +1081,7 @@ size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
     do {
         unsigned int chan = 0;
         do {
-            *p++ = (queue[chan]->data[i] - 128) << 8; //8 bit fmt is unsigned
+            *p++ = (queue[chan]->data[i] >> 8) + 128; //8 bit fmt is unsigned
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return p - buffer;
@@ -1242,38 +1253,60 @@ bool AudioRecordWav::writeHeader(File file)
     startInt(irq);
     if (!ok) return false;
 
+    
+    bool extended = false;
+
+    size_t szh = sizeof(tWaveFileHeader);
+    if (extended) szh += sizeof(tFmtHeaderExtensible);
+    
+    
     sz = size();
-    if (sz == 0) sz = sizeof(tWaveFileHeader);
+    if (sz == 0) sz = szh;
 
     tWaveFileHeader header;
+    tFmtHeaderExtensible headerextensible;
+    tDataHeader dataHeader;
 
     header.fileHeader.id = cRIFF;
-    header.fileHeader.len = sz - sizeof(tDataHeader);
+    header.fileHeader.len = sz - 8;
     header.fileHeader.riffType = cWAVE;
     header.file.dataHeader.chunkID = cFMT;
-    header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
-
-    if (channels <= 2) // TODO: u-law (fomatTag = 7)
+    if (!extended) 
+    {
+        header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
         header.file.fmtHeader.wFormatTag = 1;
+    }
     else
+    {
+         header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader) + sizeof(headerextensible);
         header.file.fmtHeader.wFormatTag = 65534;
-
+    }
     header.file.fmtHeader.wChannels = channels;
     header.file.fmtHeader.dwSamplesPerSec = sample_rate;
     header.file.fmtHeader.dwAvgBytesPerSec = sample_rate * bytes * channels;
-    header.file.fmtHeader.wBlockAlign = bytes * 8 * channels;
+    header.file.fmtHeader.wBlockAlign = bytes * channels;
     header.file.fmtHeader.wBitsPerSample = bytes * 8;
-    header.file.fmtHeader.cbSize = 0;
-
-    header.dataHeader.chunkID = cDATA;
-    header.dataHeader.chunkSize = sz - sizeof(tWaveFileHeader);
+    //header.file.fmtHeader.cbSize = 0;
 
     irq = stopInt();
-    wr = write(&header, sizeof(header));
+    write(&header, sizeof(header));
+#if 0
+    if (extended)
+    {
+        headerextensible.wValidBitsPerSample = bytes * 8;
+        headerextensible.dwChannelMask = (1 << channels) - 1;
+        headerextensible.format = 0x01;
+        memcpy(headerextensible.guid, cGUID, sizeof(headerextensible.guid));
+        write(&headerextensible, sizeof(headerextensible));
+    }
+#endif
+    dataHeader.chunkID = cDATA;
+    dataHeader.chunkSize = sz - szh;
+    wr = write(&dataHeader, sizeof(dataHeader));
     flush();
     if (pos > 0) ok = seek(pos); else ok = true;
     startInt(irq);
-    if (!ok || wr < sizeof(header)) return false;
+    if (!ok || wr < sizeof(dataHeader)) return false;
 
     last_err = ERR_OK;
 
