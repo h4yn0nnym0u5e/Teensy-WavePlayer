@@ -213,7 +213,7 @@ public:
 	uint32_t channelMask(void) {return channelmask;};
     uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
     #if USE_EVENTRESPONDER_PLAYWAV
-	static void enableEventReading(bool enable) { enableEventReading(enable); }
+	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
     #endif
 private:
     virtual void update(void);
@@ -235,6 +235,7 @@ public:
     AudioRecordWav(void): AudioStream(_AudioRecordWav_MaxChannels, queue) { begin(); }
     ~AudioRecordWav(void) { end(); }
     void stop(bool closeFile = true);
+    void pause(const bool pause);
 
     bool record(File file, APW_FORMAT fmt, unsigned int channels, bool paused = false);
     bool record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused = false);
@@ -255,7 +256,6 @@ private:
     virtual void update(void);
     void begin(void);
     void end(void);
-    void pause(const bool pause);
     size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
     audio_block_t *queue[_AudioRecordWav_MaxChannels];
     size_t sz_frame;
