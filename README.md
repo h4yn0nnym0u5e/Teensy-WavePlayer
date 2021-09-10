@@ -50,7 +50,7 @@ While playing, return the current time offset, in milliseconds.  When not playin
 #### lengthMillis()
 Return the total length of the current sound clip,in milliseconds. When not playing, the return from this function is undefined.
 #### addMemoryForRead(mult) [static]
-To make SD reads less frequent, additional buffer memory may be allocated: this should be done prior to calling `play()`. The value of `nult` actually scales the allocated memory, so `2` will double it (and thus halve the read frequency), `1` will allocate the normal minimum. The `mult` value given is used for all objects.
+To make SD reads less frequent, additional buffer memory may be allocated: this should be done prior to calling `play()`. The value of `mult` actually scales the allocated memory, so `2` will double it (and thus halve the read frequency), `1` will allocate the normal minimum. The `mult` value given is used for all objects.
 #### enableEventReading(bool) [static]
 By default SD card reads occur within the (interrupt driven) audio update cycle. By calling this function with a `true` parameter, SD card reads instead occur within the "foreground" code, using the EventResponder mechanism. Switching between mechanisms may be done at any time, even while playing is in progress, though there *may* be some loss of synchronisation.
 
