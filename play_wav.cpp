@@ -322,13 +322,13 @@ bool AudioBaseWav::initWrite(File file)
 	return true;
 }
 
-void AudioBaseWav::close(bool closeFile) //!< close file, free up the buffer, detach responder
+void AudioBaseWav::close() //!< close file, free up the buffer, detach responder
 {
     bool irq = stopInt();
 
     if (wavfile)
     {
-        if (closeFile) wavfile.close();
+        wavfile.close();
         stopUsingSPI();
     }
 
@@ -881,7 +881,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
-    sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
+    size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
     sz_mem *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -893,7 +893,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 	}
 
     last_err = ERR_OK;
-Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
+
     setPadding(0);
 
     switch(bytes) {
@@ -939,7 +939,7 @@ Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
 		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
 		// are deleted (which will happen with dynamic audio objects)
 
-		buffer_rd = my_instance * sz_frame * bytes; // pre-load according to instance number
+		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
         read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
         startInt(irq);
@@ -1125,7 +1125,7 @@ void AudioRecordWav::stop(bool closeFile)
     if (wavfile) writeHeader(wavfile);
 
     bool irq = stopInt();
-    close(closeFile);
+    if (closeFile) close();
     startInt(irq);
 
 }
@@ -1159,8 +1159,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     if (fmt != APW_8BIT_UNSIGNED && fmt != APW_16BIT_SIGNED) return false;
 
-    bytes = sample_rate = 0;
-    sz_mem = sz_frame = buffer_wr = 0;
+    sz_mem = sz_frame = bytes = sample_rate = 0;
     data_length = data_length_old = 0;
 
     dataFmt = fmt;
@@ -1205,24 +1204,21 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
 
     //calculate the needed buffer memory:
-    
     sz_mem = _AudioRecordWavInstances * sz_frame * bytes;
     sz_mem *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
+    /* todo: use that later
     int8_t* buffer =  createBuffer( sz_mem );
 	if (buffer == nullptr) {
         sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
- Serial.printf("playbuf:%x len:%x\n",(intptr_t) buffer, sz_mem);
-    buffer_wr = my_instance * sz_frame * bytes; 
-    if (buffer_wr >= sz_mem) buffer_wr = 0;
-    
+    */
+    buffer_wr = 0;
     last_err = ERR_OK;
     state = paused? STATE_PAUSED : STATE_RUNNING;
-        
     return true;
 }
 
@@ -1294,7 +1290,7 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     write(&header, sizeof(header));
-
+#if 0
     if (extended)
     {
         headerextensible.wValidBitsPerSample = bytes * 8;
@@ -1303,7 +1299,7 @@ bool AudioRecordWav::writeHeader(File file)
         memcpy(headerextensible.guid, cGUID, sizeof(headerextensible.guid));
         write(&headerextensible, sizeof(headerextensible));
     }
-
+#endif
     dataHeader.chunkID = cDATA;
     dataHeader.chunkSize = sz - szh;
     wr = write(&dataHeader, sizeof(dataHeader));
@@ -1322,6 +1318,9 @@ void  AudioRecordWav::update(void)
 {
 
     unsigned int chan;
+    size_t wr;
+    size_t sz = sz_frame * bytes;
+    int8_t buf[sz]; //todo: remove that later and use malloc'd mem
 
     chan = 0;
     do
@@ -1334,12 +1333,14 @@ void  AudioRecordWav::update(void)
 
     if (state != STATE_RUNNING) goto noRecording;
 
-    buffer_wr = encoder(buffer, buffer_wr, queue, channels);
-    if (buffer_wr >= sz_mem) 
-    {
-        buffer_wr = 0;        
-        size_t wr = write(&buffer[buffer_wr], sz_mem);
-        if (wr < sz_mem) {
+    buffer_wr = encoder(buf, buffer_wr, queue, channels);
+
+    buffer_wr = 0; //todo
+
+    if (data_length == 1 || buffer_wr == 0) {
+        wr = write(&buf[buffer_wr], sz - buffer_wr);
+        buffer_wr = 0;
+        if (wr < sz) {
             stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
         }
