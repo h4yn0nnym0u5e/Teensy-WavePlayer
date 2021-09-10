@@ -139,146 +139,27 @@ private:
     friend class AudioPlayWav;
     friend class AudioRecordWav;
 
-    AudioBaseWav(void)
-	{
-        SPTF("Constructing AudioBaseWav at %X\r\n",this);
-        buf_unaligned = buffer = nullptr;
-        #if defined (DEBUG_PIN_PLAYWAV)
-            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
-        #endif
-	}
+    AudioBaseWav(void);
     ~AudioBaseWav(void){ close(); }
+
+	int8_t* createBuffer(size_t len); //!< allocate the buffer
+    inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
    
     inline bool seek(size_t pos) { return wavfile.seek(pos); }//!< seek to new file position
     inline void flush(void) { wavfile.flush(); }
     inline size_t size() { return wavfile.size(); }//!< return file position
-	inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
 
-	inline void readLater(void) //!< from interrupt: request to re-fill the buffer
-		{
-            #if USE_EVENTRESPONDER_PLAYWAV
-			if (eventReadingEnabled)
-				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
-			else
-            #endif
-				read(buffer,sz_mem);		 // read immediately
+	inline void readLater(void); //!< from interrupt: request to re-fill the buffer	
+	inline void writeLater(void); //!< from interrupt: request to write the buffer to filesystem
+	
+	inline size_t read(void* buf,size_t len); //!< read len bytes immediately into buffer provided
+	inline size_t write(void* buf,size_t len); //!< write len bytes immediately from buffer to filesystem
 
-		}
-
-	inline void writeLater(void) //!< from interrupt: request to write the buffer to filesystem
-		{
-            #if USE_EVENTRESPONDER_PLAYWAV
-			if (eventReadingEnabled)
-				evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
-			else
-            #endif
-				write(buffer,sz_mem);		 // write immediately
-
-		}
-
-
-
-	int8_t* createBuffer(size_t len) //!< allocate the buffer
-		{
-			sz_mem = len;
-
-            #if defined(__IMXRT1062__)
-            buf_unaligned = malloc(sz_mem + 31);
-            buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
-            #else
-            buf_unaligned = malloc(sz_mem);
-            buffer = (int8_t*) buf_unaligned;
-            #endif
-			SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-			//for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
-			return buffer;
-		}
-
-	inline size_t read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
-		{
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
-            #endif
-            #if defined (CPULOAD_PLAYWAV)
-			uint32_t tmp = ARM_DWT_CYCCNT;
-            #endif
-			size_t result = wavfile.read(buf,len);
-
-			if ( result < len )
-				memset((int8_t*) buf+result, padding , len - result);
-			SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-
-            #if defined (CPULOAD_PLAYWAV)
-			// % CPU load per track per update cycle: assumes 8-bit samples
-			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-            #endif
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
-            #endif
-
-			return result;
-		}
-
-	inline size_t write(void* buf,size_t len) //!< write len bytes immediately from buffer to filesystem
-		{
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
-            #endif
-            #if defined (CPULOAD_PLAYWAV)
-			uint32_t tmp = ARM_DWT_CYCCNT;
-            #endif
-			size_t result = wavfile.write(buf,len);
-
-			SPTF("Wrote %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
-
-			#if defined (CPULOAD_PLAYWAV)
-            // % CPU load per track per update cycle: assumes 8-bit samples
-			lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
-            #endif
-            #if defined (DEBUG_PIN_PLAYWAV)
-                digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
-            #endif
-
-			return result;
-		}
-
-    void close() //!< close file, free up the buffer, detach responder
-		{
-			bool irq = stopInt();
-
-			if (wavfile)
-				wavfile.close();
-
-			if (nullptr != buf_unaligned)
-			{
-				SPTF("\r\Freed %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-				free(buf_unaligned);
-				buf_unaligned = buffer = nullptr;
-			}
-
-            #if USE_EVENTRESPONDER_PLAYWAV
-			evResp.clearEvent(); // not intuitive, but works SO much better...
-            #endif
-
-			startInt(irq);
-		}
+    void close(void); //!< close file, free up the buffer, detach responder
 
     #if USE_EVENTRESPONDER_PLAYWAV
-	static void evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
-	{
-		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
-
-		SPRT("*** ");
-		thisWM.read(thisWM.buffer,thisWM.sz_mem);
-	}
-
-	static void evFuncWrite(EventResponderRef ref) //!< foreground: respond to request to save WAV data
-	{
-		AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
-
-		SPRT("*** ");
-		thisWM.write(thisWM.buffer,thisWM.sz_mem);
-	}
+	static void evFuncRead(EventResponderRef ref); //!< foreground: respond to request to load WAV data
+	static void evFuncWrite(EventResponderRef ref); //!< foreground: respond to request to save WAV data
     #endif
 
 	//--------------------------------------------------------------------------------------------------    
@@ -332,7 +213,7 @@ public:
 	uint32_t channelMask(void) {return channelmask;};
     uint32_t lengthMillis(void) {return total_length * (1000.0f / AUDIO_SAMPLE_RATE_EXACT);};
     #if USE_EVENTRESPONDER_PLAYWAV
-	static void enableEventReading(bool enable) { AudioBaseWav::enableEventReading(enable); }
+	static void enableEventReading(bool enable) { enableEventReading(enable); }
     #endif
 private:
     virtual void update(void);
@@ -353,7 +234,7 @@ class AudioRecordWav : public AudioBaseWav, public AudioStream
 public:
     AudioRecordWav(void): AudioStream(_AudioRecordWav_MaxChannels, queue) { begin(); }
     ~AudioRecordWav(void) { end(); }
-    void stop(void);
+    void stop(bool closeFile = true);
 
     bool record(File file, APW_FORMAT fmt, unsigned int channels, bool paused = false);
     bool record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused = false);

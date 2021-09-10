@@ -73,6 +73,15 @@ __attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value
 #endif
 
 //----------------------------------------------------------------------------------------------------
+AudioBaseWav::AudioBaseWav(void)
+	{
+        SPTF("Constructing AudioBaseWav at %X\r\n",this);
+        buf_unaligned = buffer = nullptr;
+        #if defined (DEBUG_PIN_PLAYWAV)
+            pinMode(DEBUG_PIN_PLAYWAV, OUTPUT);
+        #endif
+	}
+
 bool AudioBaseWav::stopInt()
 {
     if ( NVIC_IS_ENABLED(IRQ_SOFTWARE) )
@@ -180,6 +189,110 @@ void AudioBaseWav::stopUsingSPI(void)
 }
 
 //----------------------------------------------------------------------------------------------------
+int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
+{
+    sz_mem = len;
+
+    #if defined(__IMXRT1062__)
+    buf_unaligned = malloc(sz_mem + 31);
+    buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
+    #else
+    buf_unaligned = malloc(sz_mem);
+    buffer = (int8_t*) buf_unaligned;
+    #endif
+    SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+    //for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
+    return buffer;
+}
+
+#if USE_EVENTRESPONDER_PLAYWAV
+void AudioBaseWav::evFuncRead(EventResponderRef ref) //!< foreground: respond to request to load WAV data
+{
+    AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
+
+    SPRT("*** ");
+    thisWM.read(thisWM.buffer,thisWM.sz_mem);
+}
+
+void AudioBaseWav::evFuncWrite(EventResponderRef ref) //!< foreground: respond to request to save WAV data
+{
+    AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
+
+    SPRT("*** ");
+    thisWM.write(thisWM.buffer,thisWM.sz_mem);
+}
+#endif
+
+void AudioBaseWav::readLater(void) //!< from interrupt: request to re-fill the buffer
+{
+    #if USE_EVENTRESPONDER_PLAYWAV
+    if (eventReadingEnabled)
+        evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
+    else
+    #endif
+        read(buffer,sz_mem);		 // read immediately
+
+}
+
+size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
+{
+    #if defined (DEBUG_PIN_PLAYWAV)
+        digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
+    #endif
+    #if defined (CPULOAD_PLAYWAV)
+    uint32_t tmp = ARM_DWT_CYCCNT;
+    #endif
+    size_t result = wavfile.read(buf,len);
+
+    if ( result < len )
+        memset((int8_t*) buf+result, padding , len - result);
+    SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
+
+    #if defined (CPULOAD_PLAYWAV)
+    // % CPU load per track per update cycle: assumes 8-bit samples
+    lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
+    #endif
+    #if defined (DEBUG_PIN_PLAYWAV)
+        digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
+    #endif
+
+    return result;
+}
+
+size_t AudioBaseWav::write(void* buf,size_t len) //!< write len bytes immediately from buffer to filesystem
+{
+    #if defined (DEBUG_PIN_PLAYWAV)
+        digitalWriteFast(DEBUG_PIN_PLAYWAV, HIGH);
+    #endif
+    #if defined (CPULOAD_PLAYWAV)
+    uint32_t tmp = ARM_DWT_CYCCNT;
+    #endif
+    size_t result = wavfile.write(buf,len);
+
+    SPTF("Wrote %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
+
+    #if defined (CPULOAD_PLAYWAV)
+    // % CPU load per track per update cycle: assumes 8-bit samples
+    lastFileCPUload = ((ARM_DWT_CYCCNT - tmp) * AUDIO_BLOCK_SAMPLES / len)>>6;
+    #endif
+    #if defined (DEBUG_PIN_PLAYWAV)
+        digitalWriteFast(DEBUG_PIN_PLAYWAV, LOW);
+    #endif
+
+    return result;
+}
+
+void AudioBaseWav::writeLater(void) //!< from interrupt: request to write the buffer to filesystem
+{
+    #if USE_EVENTRESPONDER_PLAYWAV
+    if (eventReadingEnabled)
+        evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
+    else
+    #endif
+        write(buffer,sz_mem);		 // write immediately
+
+}
+        
 #if USE_EVENTRESPONDER_PLAYWAV
 bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem in EventResponder, otherwise accesses happen under interrupt
 #endif
@@ -189,6 +302,7 @@ bool AudioBaseWav::eventReadingEnabled = false; //!< true to access filesystem i
 bool AudioBaseWav::initRead(File file)
 {
 	wavfile = file;
+    startUsingSPI();
     #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncRead);
     #endif
@@ -201,12 +315,36 @@ bool AudioBaseWav::initRead(File file)
 bool AudioBaseWav::initWrite(File file)
 {
 	wavfile = file;
+    startUsingSPI();
     #if USE_EVENTRESPONDER_PLAYWAV
 	evResp.attach(evFuncWrite);
     #endif
 	return true;
 }
 
+void AudioBaseWav::close() //!< close file, free up the buffer, detach responder
+{
+    bool irq = stopInt();
+
+    if (wavfile)
+    {
+        wavfile.close();
+        stopUsingSPI();
+    }
+
+    if (nullptr != buf_unaligned)
+    {
+        SPTF("\r\Freed %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+        free(buf_unaligned);
+        buf_unaligned = buffer = nullptr;
+    }
+
+    #if USE_EVENTRESPONDER_PLAYWAV
+    evResp.clearEvent(); // not intuitive, but works SO much better...
+    #endif
+
+    startInt(irq);
+}
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -360,7 +498,6 @@ bool AudioPlayWav::play(File file, const bool paused)
     if (!file) return false;
 
     initRead(file);
-    startUsingSPI();
 
     if (!readHeader(APW_NONE, 0, 0,  paused ? STATE_PAUSED : STATE_RUNNING ))
     {
@@ -373,7 +510,6 @@ bool AudioPlayWav::play(File file, const bool paused)
 bool AudioPlayWav::play(const char *filename, const bool paused)
 {
     stop();
-    startUsingSPI();
 
     bool irq = stopInt();
     File file = SD.open(filename);
@@ -387,7 +523,6 @@ bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8
     stop();
 
     initRead(file);
-    startUsingSPI();
 
     if (!readHeader(fmt, sampleRate, number_of_channels, paused ? STATE_PAUSED : STATE_RUNNING ))
     {
@@ -400,7 +535,6 @@ bool AudioPlayWav::playRaw(File file, APW_FORMAT fmt, uint32_t sampleRate, uint8
 bool AudioPlayWav::playRaw(const char *filename, APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, bool paused)
 {
     stop();
-    startUsingSPI();
 
     bool irq = stopInt();
     File file = SD.open(filename);
@@ -418,7 +552,6 @@ void AudioPlayWav::stop(void)
     close();
     startInt(irq);
 
-    stopUsingSPI();
 }
 
 //WAV:
@@ -973,7 +1106,7 @@ void AudioRecordWav::end(void)
     --_AudioRecordWavInstances;
 }
 
-void AudioRecordWav::stop(void)
+void AudioRecordWav::stop(bool closeFile)
 {
     state = STATE_STOP;
     SPLN("\r\nRecording STOP!");
@@ -981,10 +1114,9 @@ void AudioRecordWav::stop(void)
     if (wavfile) writeHeader(wavfile);
 
     bool irq = stopInt();
-    close();
+    if (closeFile) close();
     startInt(irq);
 
-    stopUsingSPI();
 }
 
 void AudioRecordWav::pause(const bool pause)
@@ -1004,8 +1136,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     bool irq, ok;
     size_t wr;
 
-    state = STATE_STOP;
-    //stop();
+    stop(false);
 
     if (!file) {
         last_err = ERR_FILE;
@@ -1014,8 +1145,8 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     last_err = ERR_FORMAT;
     if (numchannels == 0 || numchannels > _AudioRecordWav_MaxChannels) return false;
-    //Allow APW_16BIT_SIGNED only for now... more formats to come
-    if (fmt != APW_16BIT_SIGNED) return false;
+
+    if (fmt != APW_8BIT_UNSIGNED && fmt != APW_16BIT_SIGNED) return false;
 
     sz_mem = sz_frame = bytes = sample_rate = 0;
     data_length = data_length_old = 0;
@@ -1044,7 +1175,6 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     }
 
     initWrite(file);
-    startUsingSPI();
 
     //write a dummy fileheader and check if it was successful:
     memset(&fileHeader, 0xff, sizeof(fileHeader));
@@ -1083,8 +1213,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
 bool AudioRecordWav::record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused)
 {
-    stop();
-    startUsingSPI();
+    stop(true);
 
     bool irq = stopInt();
     File file = SD.open(filename, FILE_WRITE_BEGIN);
@@ -1175,15 +1304,16 @@ void  AudioRecordWav::update(void)
 
     buffer_wr = 0; //todo
 
-    ++data_length;
     if (data_length == 1 || buffer_wr == 0) {
         wr = write(&buf[buffer_wr], sz - buffer_wr);
         buffer_wr = 0;
         if (wr < sz) {
-            stop(); //Disk full, max filesize reached, SD Card removed etc.
+            stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
         }
     }
+
+    ++data_length;
 
 noRecording:
 	// release queues
