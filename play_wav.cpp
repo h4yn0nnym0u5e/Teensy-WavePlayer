@@ -927,6 +927,22 @@ typedef struct
 } __attribute__ ((__packed__)) tWaveFileHeader;
 
 //----------------------------------------------------------------------------------------------------
+// 8 bit unsigned:
+__attribute__((hot)) static
+size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
+{
+    int8_t *p = &buffer[buffer_rd];
+
+    size_t i = 0;
+    do {
+        unsigned int chan = 0;
+        do {
+            *p++ = (queue[chan]->data[i] - 128) << 8; //8 bit fmt is unsigned
+        } while (++chan < channels);
+    } while (++i < AUDIO_BLOCK_SAMPLES);
+    return p - buffer;
+
+}
 // 16 bit:
 __attribute__((hot)) static
 size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
@@ -937,8 +953,7 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
     do {
         unsigned int chan = 0;
         do {
-            *p = queue[chan]->data[i];
-            p++;
+            *p++ = queue[chan]->data[i];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return (int8_t*)p - buffer;
@@ -1016,6 +1031,10 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     switch(dataFmt)
     {
+        case APW_8BIT_UNSIGNED:
+            bytes = 1;
+            encoder = &encode_8bit;
+            break;
         case APW_16BIT_SIGNED:
             bytes = 2;
             encoder = &encode_16bit;
@@ -1056,7 +1075,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 		return false;
 	}
     */
-
+    buffer_wr = 0;
     last_err = ERR_OK;
     state = paused? STATE_PAUSED : STATE_RUNNING;
     return true;
@@ -1089,12 +1108,10 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     pos = position();
-    flush(); //TODO: is a flush needed?
+//    flush(); //TODO: is a flush needed?
     if (pos > 0) ok = seek(0); else ok = true;
     startInt(irq);
     if (!ok) return false;
-
-//Somewhere is is a bug. WinAMp plays it, other players not.
 
     sz = size();
     if (sz == 0) sz = sizeof(tWaveFileHeader);
@@ -1124,7 +1141,7 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     wr = write(&header, sizeof(header));
-    flush(); //TODO: is a flush needed?
+    flush();
     if (pos > 0) ok = seek(pos); else ok = true;
     startInt(irq);
     if (!ok || wr < sizeof(header)) return false;
@@ -1146,33 +1163,35 @@ void  AudioRecordWav::update(void)
     chan = 0;
     do
     {
-		queue[chan] = AudioStream::receiveReadOnly(chan);
-        if (!queue[chan]) {     
-           queue[chan] = (audio_block_t*)&zeroblock; 
-        }
+        audio_block_t *q;
+		q = AudioStream::receiveReadOnly(chan);
+        if (!q) q = (audio_block_t*)&zeroblock;
+        queue[chan] = q;
 	} while (++chan < _AudioRecordWav_MaxChannels);
 
     if (state != STATE_RUNNING) goto noRecording;
 
-    encoder(buf, 0, queue, channels);
+    buffer_wr = encoder(buf, buffer_wr, queue, channels);
 
-    wr = write(&buf, sz );
-    if (wr < sz) {
-        stop(); //Disk full, max filesize reached, SD Card removed etc.
-        last_err = ERR_FILE;
-        goto noRecording;
-    }
+    buffer_wr = 0; //todo
 
     ++data_length;
+    if (data_length == 1 || buffer_wr == 0) {
+        wr = write(&buf[buffer_wr], sz - buffer_wr);
+        buffer_wr = 0;
+        if (wr < sz) {
+            stop(); //Disk full, max filesize reached, SD Card removed etc.
+            last_err = ERR_FILE;
+        }
+    }
 
 noRecording:
-
-	// release queues    
+	// release queues
     chan = 0;
     do
-    {		
-        if (queue[chan] != (audio_block_t*)&zeroblock)        
-            AudioStream::release(queue[chan]);      
+    {
+        if (queue[chan] != (audio_block_t*)&zeroblock)
+            AudioStream::release(queue[chan]);
         queue[chan] = nullptr; // < why is this needed?
 	} while (++chan < _AudioRecordWav_MaxChannels);
 

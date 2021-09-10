@@ -378,6 +378,7 @@ private:
     size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
     audio_block_t *queue[_AudioRecordWav_MaxChannels];
     size_t sz_frame;
+    size_t buffer_wr;
     int data_length_old;
 };
 #endif // defined(KINETISL)
