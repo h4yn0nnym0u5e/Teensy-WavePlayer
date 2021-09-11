@@ -144,25 +144,25 @@ private:
 
 	int8_t* createBuffer(size_t len); //!< allocate the buffer
     inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
-   
+
     inline bool seek(size_t pos) { return wavfile.seek(pos); }//!< seek to new file position
     inline void flush(void) { wavfile.flush(); }
     inline size_t size() { return wavfile.size(); }//!< return file position
 
-	inline void readLater(void); //!< from interrupt: request to re-fill the buffer	
+	inline void readLater(void); //!< from interrupt: request to re-fill the buffer
 	inline void writeLater(void); //!< from interrupt: request to write the buffer to filesystem
-	
+
 	inline size_t read(void* buf,size_t len); //!< read len bytes immediately into buffer provided
 	inline size_t write(void* buf,size_t len); //!< write len bytes immediately from buffer to filesystem
 
-    void close(void); //!< close file, free up the buffer, detach responder
+    void close(bool closeFile = true); //!< close file, free up the buffer, detach responder
 
     #if USE_EVENTRESPONDER_PLAYWAV
 	static void evFuncRead(EventResponderRef ref); //!< foreground: respond to request to load WAV data
 	static void evFuncWrite(EventResponderRef ref); //!< foreground: respond to request to save WAV data
     #endif
 
-	//--------------------------------------------------------------------------------------------------    
+	//--------------------------------------------------------------------------------------------------
 	bool initRead(File file);
 	bool initWrite(File file);
     bool isRunning(void);
@@ -187,7 +187,7 @@ private:
     bool usingSPI = false;
 	uint8_t bytes = 0;  				// 1 or 2 bytes?
 	APW_STATE state = STATE_STOP;	    // play status (stop, pause, running)
-    APW_ERR last_err = ERR_OK;	
+    APW_ERR last_err = ERR_OK;
     uint8_t padding = 0;                //!< value to pad buffer at EOF
 };
 
@@ -225,7 +225,7 @@ private:
     size_t total_length = 0;			// number of audio data bytes in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
-};    
+};
 /*********************************************************************************************************/
 
 #if !defined(KINETISL)
@@ -235,7 +235,6 @@ public:
     AudioRecordWav(void): AudioStream(_AudioRecordWav_MaxChannels, queue) { begin(); }
     ~AudioRecordWav(void) { end(); }
     void stop(bool closeFile = true);
-    void pause(const bool pause);
 
     bool record(File file, APW_FORMAT fmt, unsigned int channels, bool paused = false);
     bool record(const char *filename, APW_FORMAT fmt, unsigned int channels, bool paused = false);
@@ -256,6 +255,7 @@ private:
     virtual void update(void);
     void begin(void);
     void end(void);
+    void pause(const bool pause);
     size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
     audio_block_t *queue[_AudioRecordWav_MaxChannels];
     size_t sz_frame;

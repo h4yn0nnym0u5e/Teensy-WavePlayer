@@ -191,15 +191,20 @@ void AudioBaseWav::stopUsingSPI(void)
 //----------------------------------------------------------------------------------------------------
 int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
 {
-    sz_mem = len;
 
     #if defined(__IMXRT1062__)
-    buf_unaligned = malloc(sz_mem + 31);
+    buf_unaligned = malloc(len + 31);
     buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
     #else
-    buf_unaligned = malloc(sz_mem);
+    buf_unaligned = malloc(len);
     buffer = (int8_t*) buf_unaligned;
     #endif
+
+	if (buf_unaligned != nullptr)
+		sz_mem  = len;
+	else
+		sz_mem = 0;
+
     SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
     //for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
     return buffer;
@@ -322,13 +327,14 @@ bool AudioBaseWav::initWrite(File file)
 	return true;
 }
 
-void AudioBaseWav::close() //!< close file, free up the buffer, detach responder
+
+void AudioBaseWav::close(bool closeFile) //!< close file, free up the buffer, detach responder
 {
     bool irq = stopInt();
 
     if (wavfile)
     {
-        wavfile.close();
+        if (closeFile) wavfile.close();
         stopUsingSPI();
     }
 
@@ -337,6 +343,7 @@ void AudioBaseWav::close() //!< close file, free up the buffer, detach responder
         SPTF("\r\Freed %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
         free(buf_unaligned);
         buf_unaligned = buffer = nullptr;
+		sz_mem = 0;
     }
 
     #if USE_EVENTRESPONDER_PLAYWAV
@@ -345,6 +352,7 @@ void AudioBaseWav::close() //!< close file, free up the buffer, detach responder
 
     startInt(irq);
 }
+
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -881,19 +889,19 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
-    size_t sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
-    sz_mem *= _sz_mem_additional;
+    size_t len;
+	len = _AudioPlayWavInstances * sz_frame * bytes;
+    len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  createBuffer( sz_mem );
+    int8_t* buffer =  createBuffer( len );
 	if (buffer == nullptr) {
-        sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
     last_err = ERR_OK;
-
+    //Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
     setPadding(0);
 
     switch(bytes) {
@@ -939,7 +947,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
 		// are deleted (which will happen with dynamic audio objects)
 
-		buffer_rd = my_instance*(sz_frame * bytes); // pre-load according to instance number
+		buffer_rd = my_instance * sz_frame * bytes; // pre-load according to instance number
         read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
         startInt(irq);
@@ -998,7 +1006,9 @@ void  AudioPlayWav::update(void)
     --data_length;
 	if (data_length <= 0) {
         SPLN("Stop: No Data anymore.");
-        stop();
+		Serial.println("data_length <= 0");
+		state = STATE_STOP;
+        //stop();
     }
 }
 
@@ -1059,7 +1069,6 @@ typedef struct
     tFileHeader fileHeader;
     struct {
         tDataHeader dataHeader;
-        //tFmtHeader fmtHeader;
         tFmtHeaderEx fmtHeader;
     } __attribute__ ((__packed__)) file;
 } __attribute__ ((__packed__)) tWaveFileHeader;
@@ -1124,9 +1133,7 @@ void AudioRecordWav::stop(bool closeFile)
 
     if (wavfile) writeHeader(wavfile);
 
-    bool irq = stopInt();
-    if (closeFile) close();
-    startInt(irq);
+    close(closeFile);
 
 }
 
@@ -1143,7 +1150,6 @@ void AudioRecordWav::pause(const bool pause)
 
 bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels, bool paused)
 {
-    tWaveFileHeader fileHeader;
     bool irq, ok;
     size_t wr;
 
@@ -1159,7 +1165,8 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     if (fmt != APW_8BIT_UNSIGNED && fmt != APW_16BIT_SIGNED) return false;
 
-    sz_mem = sz_frame = bytes = sample_rate = 0;
+    bytes = sample_rate = 0;
+    sz_mem = sz_frame = buffer_wr = 0;
     data_length = data_length_old = 0;
 
     dataFmt = fmt;
@@ -1188,15 +1195,16 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     initWrite(file);
 
     //write a dummy fileheader and check if it was successful:
-    memset(&fileHeader, 0xff, sizeof(fileHeader));
+	char tmp[sizeof(tWaveFileHeader) + sizeof(tDataHeader)];
+    memset(&tmp, 0xff, sizeof(tmp));
     irq = stopInt();
 
     ok = seek(0);
-    wr = write(&fileHeader, sizeof(fileHeader));
+    wr = write(&tmp, sizeof(tmp));
     flush();
     startInt(irq);
 
-    if (!ok || wr < sizeof(fileHeader)) {
+    if (!ok || wr < sizeof(tmp)) {
         last_err = ERR_FILE;
         return false;
     }
@@ -1204,21 +1212,24 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
 
     //calculate the needed buffer memory:
-    sz_mem = _AudioRecordWavInstances * sz_frame * bytes;
-    sz_mem *= _sz_mem_additional;
+
+    size_t len;
+	len = _AudioRecordWavInstances * sz_frame * bytes;
+    len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    /* todo: use that later
-    int8_t* buffer =  createBuffer( sz_mem );
+    int8_t* buffer =  createBuffer( len );
 	if (buffer == nullptr) {
-        sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
-    */
-    buffer_wr = 0;
+	//Serial.printf("recbuf:%x len:%x\n",(intptr_t) buffer, sz_mem);
+    buffer_wr = my_instance * sz_frame * bytes;
+    //if (buffer_wr >= sz_mem) buffer_wr = 0;
+
     last_err = ERR_OK;
     state = paused? STATE_PAUSED : STATE_RUNNING;
+
     return true;
 }
 
@@ -1248,18 +1259,18 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     pos = position();
-//    flush(); //TODO: is a flush needed?
+
     if (pos > 0) ok = seek(0); else ok = true;
     startInt(irq);
     if (!ok) return false;
 
-    
+
     bool extended = false;
 
     size_t szh = sizeof(tWaveFileHeader);
     if (extended) szh += sizeof(tFmtHeaderExtensible);
-    
-    
+
+
     sz = size();
     if (sz == 0) sz = szh;
 
@@ -1271,7 +1282,7 @@ bool AudioRecordWav::writeHeader(File file)
     header.fileHeader.len = sz - 8;
     header.fileHeader.riffType = cWAVE;
     header.file.dataHeader.chunkID = cFMT;
-    if (!extended) 
+    if (!extended)
     {
         header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
         header.file.fmtHeader.wFormatTag = 1;
@@ -1290,7 +1301,7 @@ bool AudioRecordWav::writeHeader(File file)
 
     irq = stopInt();
     write(&header, sizeof(header));
-#if 0
+
     if (extended)
     {
         headerextensible.wValidBitsPerSample = bytes * 8;
@@ -1299,9 +1310,10 @@ bool AudioRecordWav::writeHeader(File file)
         memcpy(headerextensible.guid, cGUID, sizeof(headerextensible.guid));
         write(&headerextensible, sizeof(headerextensible));
     }
-#endif
+
     dataHeader.chunkID = cDATA;
-    dataHeader.chunkSize = sz - szh;
+    dataHeader.chunkSize = sz - szh - sizeof(dataHeader);
+
     wr = write(&dataHeader, sizeof(dataHeader));
     flush();
     if (pos > 0) ok = seek(pos); else ok = true;
@@ -1317,30 +1329,26 @@ __attribute__((hot))
 void  AudioRecordWav::update(void)
 {
 
-    unsigned int chan;
-    size_t wr;
-    size_t sz = sz_frame * bytes;
-    int8_t buf[sz]; //todo: remove that later and use malloc'd mem
+    if (state != STATE_RUNNING) return;
+
+	unsigned int chan;
 
     chan = 0;
     do
     {
         audio_block_t *q;
 		q = AudioStream::receiveReadOnly(chan);
-        if (!q) q = (audio_block_t*)&zeroblock;
+        //if (!q) q = (audio_block_t*)&zeroblock;
         queue[chan] = q;
-	} while (++chan < _AudioRecordWav_MaxChannels);
+	} while (++chan < channels);
 
-    if (state != STATE_RUNNING) goto noRecording;
-
-    buffer_wr = encoder(buf, buffer_wr, queue, channels);
-
-    buffer_wr = 0; //todo
-
-    if (data_length == 1 || buffer_wr == 0) {
-        wr = write(&buf[buffer_wr], sz - buffer_wr);
+    buffer_wr = encoder(buffer, buffer_wr, queue, channels);
+	size_t sz_mem = getBufferSize();
+    if (buffer_wr >= sz_mem)
+    {
         buffer_wr = 0;
-        if (wr < sz) {
+        size_t wr = write(buffer , sz_mem);
+        if (wr < sz_mem) {
             stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
         }
@@ -1348,15 +1356,14 @@ void  AudioRecordWav::update(void)
 
     ++data_length;
 
-noRecording:
 	// release queues
     chan = 0;
     do
     {
-        if (queue[chan] != (audio_block_t*)&zeroblock)
+        //if (queue[chan] != (audio_block_t*)&zeroblock)
             AudioStream::release(queue[chan]);
         queue[chan] = nullptr; // < why is this needed?
-	} while (++chan < _AudioRecordWav_MaxChannels);
+	} while (++chan < channels);
 
 }
 
