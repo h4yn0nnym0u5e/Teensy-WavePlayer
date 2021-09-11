@@ -1249,36 +1249,40 @@ bool AudioRecordWav::writeHeader(File file)
     irq = stopInt();
     pos = position();
 //    flush(); //TODO: is a flush needed?
-    if (pos > 0) ok = seek(0); else ok = true;
+    if (pos > 0) 
+		ok = seek(0); 
+	else 
+		ok = true;
     startInt(irq);
-    if (!ok) return false;
+    if (!ok) 
+		return false;
 
     
     bool extended = false;
-
-    size_t szh = sizeof(tWaveFileHeader);
-    if (extended) szh += sizeof(tFmtHeaderExtensible);
-    
-    
-    sz = size();
-    if (sz == 0) sz = szh;
-
-    tWaveFileHeader header;
+	tWaveFileHeader header;
     tFmtHeaderExtensible headerextensible;
     tDataHeader dataHeader;
+	
+    size_t szh = sizeof header + sizeof dataHeader;
+    if (extended) 
+		szh += sizeof headerextensible;
+       
+    sz = size();
+    if (sz == 0) 
+		sz = szh;
 
     header.fileHeader.id = cRIFF;
-    header.fileHeader.len = sz - 8;
+    header.fileHeader.len = sz - sizeof header.fileHeader + sizeof header.fileHeader.riffType;
     header.fileHeader.riffType = cWAVE;
     header.file.dataHeader.chunkID = cFMT;
     if (!extended) 
     {
-        header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
+        header.file.dataHeader.chunkSize = sizeof header.file.fmtHeader;
         header.file.fmtHeader.wFormatTag = 1;
     }
     else
     {
-         header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader) + sizeof(headerextensible);
+        header.file.dataHeader.chunkSize = sizeof header.file.fmtHeader + sizeof headerextensible;
         header.file.fmtHeader.wFormatTag = 65534;
     }
     header.file.fmtHeader.wChannels = channels;
@@ -1289,24 +1293,28 @@ bool AudioRecordWav::writeHeader(File file)
     //header.file.fmtHeader.cbSize = 0;
 
     irq = stopInt();
-    write(&header, sizeof(header));
+    write(&header, sizeof header);
 #if 0
     if (extended)
     {
         headerextensible.wValidBitsPerSample = bytes * 8;
         headerextensible.dwChannelMask = (1 << channels) - 1;
         headerextensible.format = 0x01;
-        memcpy(headerextensible.guid, cGUID, sizeof(headerextensible.guid));
-        write(&headerextensible, sizeof(headerextensible));
+        memcpy(headerextensible.guid, cGUID, sizeof headerextensible.guid);
+        write(&headerextensible, sizeof headerextensible);
     }
 #endif
     dataHeader.chunkID = cDATA;
     dataHeader.chunkSize = sz - szh;
-    wr = write(&dataHeader, sizeof(dataHeader));
+    wr = write(&dataHeader, sizeof dataHeader);
     flush();
-    if (pos > 0) ok = seek(pos); else ok = true;
+    if (pos > 0) 
+		ok = seek(pos); 
+	else 
+		ok = true;
     startInt(irq);
-    if (!ok || wr < sizeof(dataHeader)) return false;
+    if (!ok || wr < sizeof dataHeader) 
+		return false;
 
     last_err = ERR_OK;
 
