@@ -191,15 +191,20 @@ void AudioBaseWav::stopUsingSPI(void)
 //----------------------------------------------------------------------------------------------------
 int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
 {
-    sz_mem = len;
 
     #if defined(__IMXRT1062__)
-    buf_unaligned = malloc(sz_mem + 31);
+    buf_unaligned = malloc(len + 31);
     buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
     #else
-    buf_unaligned = malloc(sz_mem);
+    buf_unaligned = malloc(len);
     buffer = (int8_t*) buf_unaligned;
     #endif
+
+	if (buf_unaligned != nullptr)
+		sz_mem  = len;
+	else
+		sz_mem = 0;
+
     SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
     //for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
     return buffer;
@@ -338,6 +343,7 @@ void AudioBaseWav::close(bool closeFile) //!< close file, free up the buffer, de
         SPTF("\r\Freed %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
         free(buf_unaligned);
         buf_unaligned = buffer = nullptr;
+		sz_mem = 0;
     }
 
     #if USE_EVENTRESPONDER_PLAYWAV
@@ -883,19 +889,19 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
-    sz_mem = _AudioPlayWavInstances * sz_frame * bytes;
-    sz_mem *= _sz_mem_additional;
+    size_t len;
+	len = _AudioPlayWavInstances * sz_frame * bytes;
+    len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  createBuffer( sz_mem );
+    int8_t* buffer =  createBuffer( len );
 	if (buffer == nullptr) {
-        sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
 
     last_err = ERR_OK;
-Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
+    //Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
     setPadding(0);
 
     switch(bytes) {
@@ -1000,7 +1006,9 @@ void  AudioPlayWav::update(void)
     --data_length;
 	if (data_length <= 0) {
         SPLN("Stop: No Data anymore.");
-        stop();
+		Serial.println("data_length <= 0");
+		state = STATE_STOP;
+        //stop();
     }
 }
 
@@ -1205,17 +1213,17 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     //calculate the needed buffer memory:
 
-    sz_mem = _AudioRecordWavInstances * sz_frame * bytes;
-    sz_mem *= _sz_mem_additional;
+    size_t len;
+	len = _AudioRecordWavInstances * sz_frame * bytes;
+    len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  createBuffer( sz_mem );
+    int8_t* buffer =  createBuffer( len );
 	if (buffer == nullptr) {
-        sz_mem = 0;
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
 	}
- Serial.printf("playbuf:%x len:%x\n",(intptr_t) buffer, sz_mem);
+	//Serial.printf("recbuf:%x len:%x\n",(intptr_t) buffer, sz_mem);
     buffer_wr = my_instance * sz_frame * bytes;
     //if (buffer_wr >= sz_mem) buffer_wr = 0;
 
@@ -1307,8 +1315,6 @@ bool AudioRecordWav::writeHeader(File file)
     dataHeader.chunkSize = sz - szh - sizeof(dataHeader);
 
     wr = write(&dataHeader, sizeof(dataHeader));
-	Serial.println (szh);
-	Serial.println(wavfile.position());
     flush();
     if (pos > 0) ok = seek(pos); else ok = true;
     startInt(irq);
@@ -1332,12 +1338,12 @@ void  AudioRecordWav::update(void)
     {
         audio_block_t *q;
 		q = AudioStream::receiveReadOnly(chan);
-        if (!q) q = (audio_block_t*)&zeroblock;
+        //if (!q) q = (audio_block_t*)&zeroblock;
         queue[chan] = q;
 	} while (++chan < channels);
 
     buffer_wr = encoder(buffer, buffer_wr, queue, channels);
-
+	size_t sz_mem = getBufferSize();
     if (buffer_wr >= sz_mem)
     {
         buffer_wr = 0;
@@ -1354,9 +1360,9 @@ void  AudioRecordWav::update(void)
     chan = 0;
     do
     {
-        if (queue[chan] != (audio_block_t*)&zeroblock)
+        //if (queue[chan] != (audio_block_t*)&zeroblock)
             AudioStream::release(queue[chan]);
-        //queue[chan] = nullptr; // < why is this needed?
+        queue[chan] = nullptr; // < why is this needed?
 	} while (++chan < channels);
 
 }
