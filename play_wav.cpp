@@ -50,7 +50,7 @@ static const uint8_t _sz_mem_additional = 1;
 static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
-static const audio_block_t zeroblock = {0};
+static const audio_block_t zeroblock = {0}; // required to deal gracefully with NULL block, no matter which encoder we use
 #endif // defined(KINETISL)
 
 
@@ -973,8 +973,10 @@ void  AudioPlayWav::update(void)
     chan = 0;
     do {
 		queue[chan] = AudioStream::allocate();
-		if ( (queue[chan] == nullptr) ) {
-			for (unsigned int i = 0; i != chan; ++i) AudioStream::release(queue[i]);
+		if ( (queue[chan] == nullptr) )
+		{
+			for (unsigned int i = 0; i != chan; ++i)
+				AudioStream::release(queue[i]);
 			last_err = ERR_NO_AUDIOBLOCKS;
 			SPLN("Waveplayer stopped: Not enough AudioMemory().");
 			stop();
@@ -1005,10 +1007,10 @@ void  AudioPlayWav::update(void)
 
     --data_length;
 	if (data_length <= 0) {
-        SPLN("Stop: No Data anymore.");
-		Serial.println("data_length <= 0");
-		state = STATE_STOP;
-        //stop();
+        SPLN("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
+		//Serial.println("data_length <= 0");
+		//state = STATE_STOP; // not good enough, leaves file open! Unless we want to?
+        stop(); // proper tidy up when playing is done
     }
 }
 
@@ -1100,13 +1102,12 @@ size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 __attribute__((hot)) static
 size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
-
     int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
     do {
         unsigned int chan = 0;
         do {
-            *p++ = queue[chan]->data[i];
+			*p++ = queue[chan]->data[i];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
     return (int8_t*)p - buffer;
@@ -1260,23 +1261,25 @@ bool AudioRecordWav::writeHeader(File file)
     irq = stopInt();
     pos = position();
 
-    if (pos > 0) ok = seek(0); else ok = true;
+    if (pos > 0)
+		ok = seek(0);
+	else
+		ok = true;
     startInt(irq);
-    if (!ok) return false;
+    if (!ok)
+		return false;
 
 
     bool extended = false;
-
-    size_t szh = sizeof(tWaveFileHeader);
-    if (extended) szh += sizeof(tFmtHeaderExtensible);
-
-
-    sz = size();
-    if (sz == 0) sz = szh;
-
     tWaveFileHeader header;
     tFmtHeaderExtensible headerextensible;
     tDataHeader dataHeader;
+
+    size_t szh = sizeof header;
+    if (extended) szh += sizeof headerextensible;
+
+    sz = size();
+    if (sz == 0) sz = szh;
 
     header.fileHeader.id = cRIFF;
     header.fileHeader.len = sz - 8;
@@ -1284,12 +1287,12 @@ bool AudioRecordWav::writeHeader(File file)
     header.file.dataHeader.chunkID = cFMT;
     if (!extended)
     {
-        header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader);
+        header.file.dataHeader.chunkSize = sizeof header.file.fmtHeader;
         header.file.fmtHeader.wFormatTag = 1;
     }
     else
     {
-         header.file.dataHeader.chunkSize = sizeof(header.file.fmtHeader) + sizeof(headerextensible);
+         header.file.dataHeader.chunkSize = sizeof header.file.fmtHeader + sizeof headerextensible;
         header.file.fmtHeader.wFormatTag = 65534;
     }
     header.file.fmtHeader.wChannels = channels;
@@ -1300,25 +1303,29 @@ bool AudioRecordWav::writeHeader(File file)
     //header.file.fmtHeader.cbSize = 0;
 
     irq = stopInt();
-    write(&header, sizeof(header));
+    write(&header, sizeof header);
 
     if (extended)
     {
         headerextensible.wValidBitsPerSample = bytes * 8;
         headerextensible.dwChannelMask = (1 << channels) - 1;
         headerextensible.format = 0x01;
-        memcpy(headerextensible.guid, cGUID, sizeof(headerextensible.guid));
-        write(&headerextensible, sizeof(headerextensible));
+        memcpy(headerextensible.guid, cGUID, sizeof headerextensible.guid);
+        write(&headerextensible, sizeof headerextensible);
     }
 
     dataHeader.chunkID = cDATA;
-    dataHeader.chunkSize = sz - szh - sizeof(dataHeader);
+    dataHeader.chunkSize = sz - szh - sizeof dataHeader;
 
-    wr = write(&dataHeader, sizeof(dataHeader));
+    wr = write(&dataHeader, sizeof dataHeader);
     flush();
-    if (pos > 0) ok = seek(pos); else ok = true;
+    if (pos > 0)
+		ok = seek(pos);
+	else
+		ok = true;
     startInt(irq);
-    if (!ok || wr < sizeof(dataHeader)) return false;
+    if (!ok || wr < sizeof dataHeader)
+		return false;
 
     last_err = ERR_OK;
 
@@ -1338,7 +1345,8 @@ void  AudioRecordWav::update(void)
     {
         audio_block_t *q;
 		q = AudioStream::receiveReadOnly(chan);
-        //if (!q) q = (audio_block_t*)&zeroblock;
+        if (!q) // we've been passed NULL, this means...
+			q = (audio_block_t*)&zeroblock; // ... data of all zeros: we NEED this!
         queue[chan] = q;
 	} while (++chan < channels);
 
@@ -1360,7 +1368,8 @@ void  AudioRecordWav::update(void)
     chan = 0;
     do
     {
-        //if (queue[chan] != (audio_block_t*)&zeroblock)
+        if (queue[chan] != nullptr
+		 &&	queue[chan] != (audio_block_t*)&zeroblock) // don't release our block of zeroes!
             AudioStream::release(queue[chan]);
         queue[chan] = nullptr; // < why is this needed?
 	} while (++chan < channels);
