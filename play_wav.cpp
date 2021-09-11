@@ -37,6 +37,7 @@
 
 #include "play_wav.h"
 #include <spi_interrupt.h>
+#include <memcpy_audio.h>
 
 //#define HANDLE_SPI    1 //TODO...
 
@@ -362,14 +363,30 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
     int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
-    do {
-        unsigned int chan = 0;
-        do {
-            queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-        } while (++chan < channels);
-    } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
+	switch (channels) {
+		case 1:
+			do {
+				queue[0]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
 
+		case 2:
+			do {
+				queue[0]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+				queue[1]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
+				unsigned int chan = 0;
+				do {
+					queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+				} while (++chan < channels);
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+	}
+    return p - buffer;
 }
 
 
@@ -432,13 +449,30 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
     uint8_t *p = (uint8_t*)&buffer[buffer_rd];
 
     size_t i = 0;
-    do {
-        unsigned int chan = 0;
-        do {
-            queue[chan]->data[i] = ulaw_decode[*p++];
-        } while (++chan < channels);
-    } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
+	switch (channels) {
+		case 1:
+			do {
+				queue[0]->data[i] = ulaw_decode[*p++];
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		case 2:
+			do {
+				queue[0]->data[i] = ulaw_decode[*p++];
+				queue[1]->data[i] = ulaw_decode[*p++];
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
+				unsigned int chan = 0;
+				do {
+					queue[chan]->data[i] = ulaw_decode[*p++];
+				} while (++chan < channels);
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+	}
+    return (int8_t *)p - buffer;
 }
 
 // 16 bit:
@@ -448,12 +482,29 @@ size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 
     int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
-    do {
-        unsigned int chan = 0;
-        do {
-            queue[chan]->data[i] = *p++;
-        } while (++chan < channels);
-    } while (++i < AUDIO_BLOCK_SAMPLES);
+	switch(channels) {
+		case 1:
+			//memcpy(&queue[0]->data[0], p, AUDIO_BLOCK_SAMPLES*2); //benchmak this
+			do {
+				queue[0]->data[i] = *p++;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+		case 2:
+			//Todo 32 bit reads
+			do {
+				queue[0]->data[i] = *p++;
+				queue[1]->data[i] = *p++;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+		default:
+			do {
+				unsigned int chan = 0;
+				do {
+					queue[chan]->data[i] = *p++;
+				} while (++chan < channels);
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+	}
     return (int8_t*)p - buffer;
 }
 
@@ -621,7 +672,7 @@ typedef struct
 typedef struct
 {
 	//unsigned long  chunkID;
-  //unsigned long  chunkSize;
+    //unsigned long  chunkSize;
 	//tFmtHeaderex fmtHeader;
   union {
     unsigned short wValidBitsPerSample;
@@ -901,7 +952,6 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 	}
 
     last_err = ERR_OK;
-    //Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
     setPadding(0);
 
     switch(bytes) {
@@ -985,7 +1035,6 @@ void  AudioPlayWav::update(void)
 	} while (++chan < channels);
 
 	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
-    //if (nullptr == currentPos) return; //This WILL NOT happen. IF it happens, let it crash for easier debug.
 
 	// copy the samples to the audio blocks:
     buffer_rd = decoder(buffer, buffer_rd, queue, channels);
@@ -1008,8 +1057,6 @@ void  AudioPlayWav::update(void)
     --data_length;
 	if (data_length <= 0) {
         SPLN("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
-		//Serial.println("data_length <= 0");
-		//state = STATE_STOP; // not good enough, leaves file open! Unless we want to?
         stop(); // proper tidy up when playing is done
     }
 }
@@ -1103,13 +1150,32 @@ __attribute__((hot)) static
 size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
     int16_t *p = (int16_t*) &buffer[buffer_rd];
-    size_t i = 0;
-    do {
-        unsigned int chan = 0;
-        do {
-			*p++ = queue[chan]->data[i];
-        } while (++chan < channels);
-    } while (++i < AUDIO_BLOCK_SAMPLES);
+	size_t i = 0;
+	switch (channels)
+	{
+		case 1:
+			memcpy(p, &queue[0]->data[0], AUDIO_BLOCK_SAMPLES * 2);
+			return buffer_rd + AUDIO_BLOCK_SAMPLES * 2;
+		case 2:
+			#if 0
+			//memcpy_tointerleaveLR(p, &queue[0]->data[0] , &queue[1]->data[0]);
+			//return buffer_rd + AUDIO_BLOCK_SAMPLES * 4;
+			#else
+			do {
+				*p++ = queue[0]->data[i];
+				*p++ = queue[1]->data[i];
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+			#endif
+		default:
+			do {
+				unsigned int chan = 0;
+				do {
+					*p++ = queue[chan]->data[i];
+				} while (++chan < channels);
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+	}
     return (int8_t*)p - buffer;
 }
 //----------------------------------------------------------------------------------------------------
@@ -1270,7 +1336,7 @@ bool AudioRecordWav::writeHeader(File file)
 		return false;
 
 
-    bool extended = false;
+    const bool extended = false; //may be needed later.
     tWaveFileHeader header;
     tFmtHeaderExtensible headerextensible;
     tDataHeader dataHeader;
