@@ -54,6 +54,7 @@ static uint8_t _sz_mem_additional = 1;
 static const audio_block_t zeroblock = {0}; // required to deal gracefully with NULL block, no matter which encoder we use
 #endif // defined(KINETISL)
 
+static const uint8_t bytesPerSample[APW_NONE] = {1, 1, 1, 2, 2};
 
 //----------------------------------------------------------------------------------------------------
 #if !defined(KINETISL)
@@ -768,20 +769,6 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //Serial.println("Format: RAW");
         total_length = size();
         if (total_length == 0) return false;
-        switch (dataFmt)
-        {
-            case APW_NONE: //to prevent a GCC warning..
-                break;
-            case APW_8BIT_UNSIGNED:
-            case APW_8BIT_SIGNED:
-            case APW_ULAW:
-                bytes = 1;
-                break;
-            case APW_16BIT_SIGNED:
-            case APW_16BIT_SIGNED_BIGENDIAN:
-                bytes = 2;
-                break;
-        }
     }
     else
 #if !defined(KINETISL)
@@ -797,6 +784,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //if ( isAIFC ) Serial.println("AIFC"); else Serial.println("AIFF");
         bool COMMread = false;
         bool SSNDread = false;
+		uint8_t bytes;
 
         do {
             irq = stopInt();
@@ -870,6 +858,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //Serial.println("Format: WAV");
         size_t position = sizeof(fileHeader);
         bool fmtok = false;
+		uint8_t bytes;
 
         do {
             irq = stopInt();
@@ -907,6 +896,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
                 sample_rate = fmtHeader.dwSamplesPerSec;
                 channels = fmtHeader.wChannels;
                 if (bytes == 0 || bytes > 2) return false;
+				if (bytes == 2) dataFmt = APW_16BIT_SIGNED;
                 if (fmtHeader.wFormatTag != 1 &&
                     fmtHeader.wFormatTag != 7 && //ulaw
                     fmtHeader.wFormatTag != 65534) return false;
@@ -934,6 +924,9 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
     if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
     if (sample_rate == 0) sample_rate = AUDIO_SAMPLE_RATE_EXACT;
+	if (dataFmt == APW_NONE) return false;
+
+	bytes = bytesPerSample[dataFmt];
 
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     data_length = total_length / (sz_frame * bytes);
@@ -953,35 +946,26 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     last_err = ERR_OK;
     setPadding(0);
 
-    switch(bytes) {
-        default:
-        case 1: switch (dataFmt) {
-                    default:
-                    case APW_8BIT_UNSIGNED:
-                            decoder = &decode_8bit;
-                            setPadding(128);
-                            break;
-                    case APW_8BIT_SIGNED:
-                            decoder = &decode_8bit_signed;
-                            break;
-                    case APW_ULAW:
-                            decoder = &decode_8bit_ulaw;
-                            break;
-                }
-                break;
-
-        case 2: switch (dataFmt) {
-                    default:
-                    case APW_16BIT_SIGNED:
-                            decoder = &decode_16bit;
-                            break;
-                    #if !defined(KINETISL)
-                    case APW_16BIT_SIGNED_BIGENDIAN:
-                            decoder = &decode_16bit_bigendian;
-                            break;
-                    #endif
-                }
-                break;
+	switch (dataFmt) {
+		case APW_8BIT_UNSIGNED:
+				decoder = &decode_8bit;
+				setPadding(128);
+				break;
+		case APW_8BIT_SIGNED:
+				decoder = &decode_8bit_signed;
+				break;
+		case APW_ULAW:
+				decoder = &decode_8bit_ulaw;
+				break;
+		case APW_16BIT_SIGNED:
+				decoder = &decode_16bit;
+				break;
+		#if !defined(KINETISL)
+		case APW_16BIT_SIGNED_BIGENDIAN:
+				decoder = &decode_16bit_bigendian;
+				break;
+		#endif
+		default: break;
     }
 
 #if !defined(KINETISL)
@@ -1036,7 +1020,7 @@ void  AudioPlayWav::update(void)
 	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
 
 	// copy the samples to the audio blocks:
-    buffer_rd += decoder(buffer, buffer_rd, queue, channels);
+    buffer_rd += decoder(buffer, buffer_rd, queue, channels) * channels;
 
     size_t sz_mem = getBufferSize();
     if (buffer_rd >= sz_mem ) {
@@ -1249,11 +1233,12 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     if (fmt != APW_8BIT_UNSIGNED && fmt != APW_16BIT_SIGNED) return false;
 
-    bytes = sample_rate = 0;
+    sample_rate = 0;
     sz_mem = sz_frame = buffer_wr = 0;
     data_length = data_length_old = 0;
 
     dataFmt = fmt;
+	bytes = bytesPerSample[dataFmt];
     channels = numchannels;
 
     #if !defined(__IMXRT1062__)
@@ -1262,14 +1247,13 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
     #endif
 
+
     switch(dataFmt)
     {
         case APW_8BIT_UNSIGNED:
-            bytes = 1;
             encoder = &encode_8bit;
             break;
         case APW_16BIT_SIGNED:
-            bytes = 2;
             encoder = &encode_16bit;
             break;
         default:
@@ -1433,7 +1417,7 @@ void  AudioRecordWav::update(void)
         queue[chan] = q;
 	} while (++chan < channels);
 
-    buffer_wr += encoder(buffer, buffer_wr, queue, channels);
+    buffer_wr += encoder(buffer, buffer_wr, queue, channels) * channels;
 	size_t sz_mem = getBufferSize();
     if (buffer_wr >= sz_mem)
     {
