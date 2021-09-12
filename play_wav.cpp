@@ -37,13 +37,14 @@
 
 #include "play_wav.h"
 #include <spi_interrupt.h>
-#include <memcpy_audio.h>
+
 
 //#define HANDLE_SPI    1 //TODO...
 
 #if defined(KINETISL)
 static const uint8_t _AudioPlayWavInstances = 1;
 static const uint8_t _sz_mem_additional = 1;
+static uint8_t _AudioPlayWavLastInstance;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
 #endif // AUDIO_BLOCK_SAMPLES < 128
@@ -51,27 +52,45 @@ static const uint8_t _sz_mem_additional = 1;
 static uint8_t _AudioPlayWavInstances = 0;
 static uint8_t _AudioRecordWavInstances = 0;
 static uint8_t _sz_mem_additional = 1;
+static uint8_t _AudioPlayWavLastInstance;
 static const audio_block_t zeroblock = {0}; // required to deal gracefully with NULL block, no matter which encoder we use
 #endif // defined(KINETISL)
+
+#define PACKED __attribute__((packed))
 
 static const uint8_t bytesPerSample[APW_NONE] = {1, 1, 1, 2, 2};
 
 //----------------------------------------------------------------------------------------------------
 #if !defined(KINETISL)
 //Reverse Byte order:
-__attribute__( ( always_inline ) ) static inline uint32_t __rev(uint32_t value)
+__attribute__(( always_inline )) static inline uint32_t __rev(uint32_t value)
 {
   uint32_t result;
   asm volatile ("rev %0, %1" : "=r" (result) : "r" (value) );
   return(result);
 }
 
-__attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value)
+__attribute__(( always_inline )) static inline uint32_t __rev16(uint32_t value)
 {
   uint32_t result;
   asm volatile ("rev16 %0, %1" : "=r" (result) : "r" (value) );
   return(result);
 }
+
+__attribute__(( always_inline )) static inline uint32_t __ldrexw(volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("ldrex %0, [%1]" : "=r" (result) : "r" (addr) );
+   return(result);
+}
+
+__attribute__(( always_inline )) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
+   return(result);
+}
+
 #endif
 
 //----------------------------------------------------------------------------------------------------
@@ -102,11 +121,8 @@ void AudioBaseWav::startInt(bool enabled)
 
 bool AudioBaseWav::isRunning(void)
 {
-    yield();
-    bool irq = stopInt();
-    bool s = state == STATE_RUNNING;
-    startInt(irq);
-    return s;
+    //yield();
+    return state == STATE_RUNNING;
 }
 
 void AudioBaseWav::pause(const bool pause)
@@ -252,7 +268,7 @@ size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately 
     size_t result = wavfile.read(buf,len);
 
     if ( result < len )
-        memset((int8_t*) buf+result, padding , len - result);
+//        memset((int8_t*) buf+result, padding , len - result);
     SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
 
     #if defined (CPULOAD_PLAYWAV)
@@ -355,6 +371,16 @@ void AudioBaseWav::close(bool closeFile) //!< close file, free up the buffer, de
     startInt(irq);
 }
 
+int AudioBaseWav::calcBufPreload(int count, int last, int my)
+{
+  int c = -1;
+  do {
+    ++c;
+    if (++last >= count) last = 0;
+  } while (last != my);
+  return c;
+}
+
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -366,6 +392,7 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
     size_t i = 0;
 	switch (channels) {
 		case 1:
+			//todo: 32 bit reads
 			do {
 				queue[0]->data[i  ] = ( p[i  ] - 128 ) << 8; //8 bit fmt is unsigned
 				queue[0]->data[i+1] = ( p[i+1] - 128 ) << 8;
@@ -374,6 +401,7 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 			break;
 
 		case 2:
+			//todo: 32 bit reads
 			do {
 				queue[0]->data[i] = ( *p++ - 128 ) << 8;
 				queue[1]->data[i] = ( *p++ - 128 ) << 8;
@@ -650,7 +678,7 @@ typedef struct {
   unsigned long id;
   unsigned long len;
   unsigned long riffType;
-} tFileHeader;
+} PACKED tFileHeader;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformat
 typedef struct
@@ -662,7 +690,7 @@ typedef struct
   unsigned long   nSamplesPerSec;
   unsigned long   nAvgBytesPerSec;
   unsigned short  nBlockAlign;
-} __attribute__ ((__packed__)) tFmtHeader;
+} PACKED tFmtHeader;
 
 // https://docs.microsoft.com/en-us/previous-versions/dd757713(v=vs.85)
 typedef struct
@@ -676,7 +704,7 @@ typedef struct
   unsigned short wBlockAlign;
   unsigned short wBitsPerSample;
   //unsigned short cbSize;
-} __attribute__ ((__packed__)) tFmtHeaderEx;
+} PACKED tFmtHeaderEx;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
 typedef struct
@@ -688,18 +716,19 @@ typedef struct
     unsigned short wValidBitsPerSample;
     unsigned short wSamplesPerBlock;
     unsigned short wReserved;
-  };
+  } PACKED;
   unsigned long dwChannelMask;
   struct {
     unsigned short  format;
     char guid[14];
-  } __attribute__ ((__packed__));
-} __attribute__ ((__packed__)) tFmtHeaderExtensible;
+  } PACKED;
+} PACKED tFmtHeaderExtensible;
 
-typedef struct {
+typedef struct
+{
   unsigned long chunkID;
   unsigned long chunkSize;
-} __attribute__ ((__packed__)) tDataHeader;
+} PACKED tDataHeader;
 
 
 //AIFF, AIFC:
@@ -731,7 +760,7 @@ typedef struct {
     unsigned long numSampleFrames;
     short sampleSize;
     uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
-}  __attribute__ ((__packed__)) taiffCommonChunk;
+} PACKED taiffCommonChunk;
 
 typedef struct {
     short numChannels;
@@ -739,7 +768,7 @@ typedef struct {
     short sampleSize;
     uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
     unsigned long compressionType;
-}  __attribute__ ((__packed__)) taifcCommonChunk;
+} PACKED taifcCommonChunk;
 
 
 bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState)
@@ -964,21 +993,16 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
 #if !defined(KINETISL)
     if (_AudioPlayWavInstances > 1) {
-        //For sync start, and to start immediately:
+
 
         irq = stopInt();
+		int load = calcBufPreload(_AudioPlayWavInstances, _AudioPlayWavLastInstance, my_instance);
+		buffer_rd = load * sz_frame * bytes; // pre-load according to instance number
+		if (load > 0)
+			read(&buffer[buffer_rd], sz_mem - buffer_rd);
 
-		// Simplified calculation of how much buffer to pre-load, from all down
-		// to 1/Nth depending on the instance number. This sort of works, but
-		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the
-		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
-		// are deleted (which will happen with dynamic audio objects)
-
-		buffer_rd = my_instance * sz_frame * bytes; // pre-load according to instance number
-        read(&buffer[buffer_rd], sz_mem - buffer_rd);
-        state = newState;
+		state = newState;
         startInt(irq);
-
     } else
         state = newState;
 #else
@@ -991,7 +1015,8 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-    if (state != STATE_RUNNING) return;
+	_AudioPlayWavLastInstance = my_instance;
+	if (state != STATE_RUNNING) return;
 
     unsigned int chan;
 
@@ -1036,27 +1061,11 @@ void  AudioPlayWav::update(void)
         SPLN("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
         stop(); // proper tidy up when playing is done
     }
+
 }
 
 #define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
-
 #if !defined(KINETISL)
-__attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)
-{
-   uint32_t result;
-   asm volatile ("ldrex %0, [%1]" : "=r" (result) : "r" (addr) );
-   return(result);
-}
-
-
-__attribute__( ( always_inline ) ) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
-{
-   uint32_t result;
-   asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
-   return(result);
-}
-
-
 uint32_t AudioPlayWav::positionMillis(void)
 {
     uint32_t safe_read, ret;
@@ -1096,13 +1105,13 @@ typedef struct
     struct {
         tDataHeader dataHeader;
         tFmtHeaderEx fmtHeader;
-    } __attribute__ ((__packed__)) file;
-} __attribute__ ((__packed__)) tWaveFileHeader;
+    } PACKED file;
+} PACKED tWaveFileHeader;
 
 typedef struct {
         tDataHeader dataHeader;
         uint32_t dwSampleLength;
-} __attribute__ ((__packed__)) tfactChunk;
+} PACKED tfactChunk;
 
 
 //----------------------------------------------------------------------------------------------------
@@ -1116,12 +1125,14 @@ size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 	switch (channels)
 	{
 		case 1:
+			//todo: 32 bit
 			do {
 				*p++ = (queue[0]->data[i] >> 8) + 128; //8 bit fmt is unsigned
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 
 		case 2:
+			//todo: 32 bit
 			do {
 				*p++ = (queue[0]->data[i] >> 8) + 128;
 				*p++ = (queue[1]->data[i] >> 8) + 128;
@@ -1152,16 +1163,12 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 			memcpy(p, &queue[0]->data[0], AUDIO_BLOCK_SAMPLES * 2);
 			break;
 		case 2:
-			#if 0
-			//memcpy_tointerleaveLR(p, &queue[0]->data[0] , &queue[1]->data[0]);
-			//return buffer_rd + AUDIO_BLOCK_SAMPLES * 4;
-			#else
+			//todo: 32 bit
 			do {
 				*p++ = queue[0]->data[i];
 				*p++ = queue[1]->data[i];
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
-			#endif
 		default:
 			do {
 				unsigned int chan = 0;
