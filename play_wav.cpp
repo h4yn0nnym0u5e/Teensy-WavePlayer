@@ -895,8 +895,9 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
                 if (fmtHeader.dwSamplesPerSec == 0) return false;
                 sample_rate = fmtHeader.dwSamplesPerSec;
                 channels = fmtHeader.wChannels;
-                if (bytes == 0 || bytes > 2) return false;
-				if (bytes == 2) dataFmt = APW_16BIT_SIGNED;
+				if (bytes == 1) dataFmt = APW_8BIT_UNSIGNED;
+				else if (bytes == 2) dataFmt = APW_16BIT_SIGNED;
+				else return false;
                 if (fmtHeader.wFormatTag != 1 &&
                     fmtHeader.wFormatTag != 7 && //ulaw
                     fmtHeader.wFormatTag != 65534) return false;
@@ -948,8 +949,8 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
 	switch (dataFmt) {
 		case APW_8BIT_UNSIGNED:
-				decoder = &decode_8bit;
 				setPadding(128);
+				decoder = &decode_8bit;
 				break;
 		case APW_8BIT_SIGNED:
 				decoder = &decode_8bit_signed;
