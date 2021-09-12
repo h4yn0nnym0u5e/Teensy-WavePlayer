@@ -210,7 +210,7 @@ void AudioBaseWav::stopUsingSPI(void)
 int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
 {
 
-    #if defined(x__IMXRT1062__)
+    #if defined(__IMXRT1062__)
     buf_unaligned = malloc(len + 31);
     buffer = (int8_t*)(((uintptr_t)(buf_unaligned) + 31) & ~31);
     #else
@@ -1058,7 +1058,7 @@ void  AudioPlayWav::update(void)
 
     --data_length;
 	if (data_length <= 0) {
-        Serial.println("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
+        SPLN("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
         stop(); // proper tidy up when playing is done
     }
 

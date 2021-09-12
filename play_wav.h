@@ -68,7 +68,7 @@ enum APW_ERR { ERR_OK = 0,              // no Error
 #define SFSH(...)
 #endif  // defined(DEBUG_PRINT_PLAYWAV)
 
-#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
+//#define DEBUG_PIN_PLAYWAV 0 //enable to view the timing on a scope
 
 
 #if defined(KINETISL)
