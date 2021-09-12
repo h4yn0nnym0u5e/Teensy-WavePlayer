@@ -268,7 +268,7 @@ size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately 
     size_t result = wavfile.read(buf,len);
 
     if ( result < len )
-//        memset((int8_t*) buf+result, padding , len - result);
+        memset((int8_t*) buf+result, padding , len - result);
     SPTF("Read %d bytes to %x: fifth int16 is %d\r\n",len,buf,*(((int16_t*) buf)+4));
 
     #if defined (CPULOAD_PLAYWAV)
