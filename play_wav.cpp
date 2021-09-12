@@ -386,7 +386,7 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 	}
-    return p - buffer;
+    return AUDIO_BLOCK_SAMPLES;
 }
 
 
@@ -403,7 +403,7 @@ size_t decode_8bit_signed(int8_t buffer[], size_t buffer_rd, audio_block_t *queu
             queue[chan]->data[i] = (*p++) << 8;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
+    return AUDIO_BLOCK_SAMPLES;
 
 }
 
@@ -472,7 +472,7 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 	}
-    return (int8_t *)p - buffer;
+    return AUDIO_BLOCK_SAMPLES;
 }
 
 // 16 bit:
@@ -505,7 +505,7 @@ size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 	}
-    return (int8_t*)p - buffer;
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 
 // 16 bit big endian:
@@ -522,8 +522,7 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
             queue[chan]->data[i] = __rev16(*p++);
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
-
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 #endif
 
@@ -1037,7 +1036,7 @@ void  AudioPlayWav::update(void)
 	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
 
 	// copy the samples to the audio blocks:
-    buffer_rd = decoder(buffer, buffer_rd, queue, channels);
+    buffer_rd += decoder(buffer, buffer_rd, queue, channels);
 
     size_t sz_mem = getBufferSize();
     if (buffer_rd >= sz_mem ) {
@@ -1134,15 +1133,33 @@ __attribute__((hot)) static
 size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
     int8_t *p = &buffer[buffer_rd];
+	size_t i = 0;
 
-    size_t i = 0;
-    do {
-        unsigned int chan = 0;
-        do {
-            *p++ = (queue[chan]->data[i] >> 8) + 128; //8 bit fmt is unsigned
-        } while (++chan < channels);
-    } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
+	switch (channels)
+	{
+		case 1:
+			do {
+				*p++ = (queue[0]->data[i] >> 8) + 128; //8 bit fmt is unsigned
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		case 2:
+			do {
+				*p++ = (queue[0]->data[i] >> 8) + 128;
+				*p++ = (queue[1]->data[i] >> 8) + 128;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
+				unsigned int chan = 0;
+				do {
+					*p++ = (queue[chan]->data[i] >> 8) + 128;
+				} while (++chan < channels);
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+	}
+    return AUDIO_BLOCK_SAMPLES;
 
 }
 // 16 bit:
@@ -1155,7 +1172,7 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 	{
 		case 1:
 			memcpy(p, &queue[0]->data[0], AUDIO_BLOCK_SAMPLES * 2);
-			return buffer_rd + AUDIO_BLOCK_SAMPLES * 2;
+			break;
 		case 2:
 			#if 0
 			//memcpy_tointerleaveLR(p, &queue[0]->data[0] , &queue[1]->data[0]);
@@ -1176,7 +1193,7 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 	}
-    return (int8_t*)p - buffer;
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 //----------------------------------------------------------------------------------------------------
 
@@ -1416,7 +1433,7 @@ void  AudioRecordWav::update(void)
         queue[chan] = q;
 	} while (++chan < channels);
 
-    buffer_wr = encoder(buffer, buffer_wr, queue, channels);
+    buffer_wr += encoder(buffer, buffer_wr, queue, channels);
 	size_t sz_mem = getBufferSize();
     if (buffer_wr >= sz_mem)
     {
