@@ -1016,8 +1016,8 @@ __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
 	_AudioPlayWavLastInstance = my_instance;
-    if (state != STATE_RUNNING) return;
-	if (data_length <= 0 ) return;
+	if (state != STATE_RUNNING) return;
+
     unsigned int chan;
 
 	// allocate the audio blocks to transmit
