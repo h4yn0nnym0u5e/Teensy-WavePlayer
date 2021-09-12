@@ -367,14 +367,16 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 	switch (channels) {
 		case 1:
 			do {
-				queue[0]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-			} while (++i < AUDIO_BLOCK_SAMPLES);
+				queue[0]->data[i  ] = ( p[i  ] - 128 ) << 8; //8 bit fmt is unsigned
+				queue[0]->data[i+1] = ( p[i+1] - 128 ) << 8;
+				i += 2;
+			} while (i < AUDIO_BLOCK_SAMPLES);
 			break;
 
 		case 2:
 			do {
-				queue[0]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
-				queue[1]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+				queue[0]->data[i] = ( *p++ - 128 ) << 8;
+				queue[1]->data[i] = ( *p++ - 128 ) << 8;
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
 
@@ -382,7 +384,7 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
 			do {
 				unsigned int chan = 0;
 				do {
-					queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+					queue[chan]->data[i] = ( *p++ - 128 ) << 8;
 				} while (++chan < channels);
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
@@ -453,8 +455,10 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
 	switch (channels) {
 		case 1:
 			do {
-				queue[0]->data[i] = ulaw_decode[*p++];
-			} while (++i < AUDIO_BLOCK_SAMPLES);
+				queue[0]->data[i    ] = ulaw_decode[p[i    ]];
+				queue[0]->data[i + 1] = ulaw_decode[p[i + 1]];
+				i += 2;
+			} while (i < AUDIO_BLOCK_SAMPLES);
 			break;
 
 		case 2:
@@ -481,23 +485,24 @@ __attribute__((hot)) static
 size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
 
-    int16_t *p = (int16_t*) &buffer[buffer_rd];
-    size_t i = 0;
 	switch(channels) {
 		case 1:
-			//memcpy(&queue[0]->data[0], p, AUDIO_BLOCK_SAMPLES*2); //benchmak this
+			memcpy(&queue[0]->data[0], &buffer[buffer_rd], AUDIO_BLOCK_SAMPLES*2); //benchmak this
+			break;
+		case 2: {
+			uint32_t sample;
+			size_t i = 0;
+			int32_t *p32 = (int32_t*) &buffer[buffer_rd];
 			do {
-				queue[0]->data[i] = *p++;
+				sample = *p32++;
+				queue[0]->data[i] = sample;
+				queue[1]->data[i] = sample >> 16;
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
-		case 2:
-			//Todo 32 bit reads
-			do {
-				queue[0]->data[i] = *p++;
-				queue[1]->data[i] = *p++;
-			} while (++i < AUDIO_BLOCK_SAMPLES);
-			break;
-		default:
+		}
+		default: {
+			size_t i = 0;
+			int16_t *p = (int16_t*) &buffer[buffer_rd];
 			do {
 				unsigned int chan = 0;
 				do {
@@ -505,6 +510,7 @@ size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 				} while (++chan < channels);
 			} while (++i < AUDIO_BLOCK_SAMPLES);
 			break;
+		}
 	}
     return AUDIO_BLOCK_SAMPLES * 2;
 }
@@ -526,6 +532,10 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
     return AUDIO_BLOCK_SAMPLES * 2;
 }
 #endif
+
+static const _tEncoderDecoder decoders[APW_NONE] = {
+	decode_8bit, decode_8bit_signed, decode_8bit_ulaw,
+	decode_16bit, decode_16bit_bigendian};
 
 // Todo:
 //- upsampling (CMSIS?)
@@ -814,7 +824,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
                 if (bytes == 2) {
                     if (isAIFC) return false;
-                    dataFmt = APW_16BIT_SIGNED; //16 Bit signed
+                    dataFmt = APW_16BIT_SIGNED_BIGENDIAN;
                 } else
                 if (bytes == 1){
                     if (isAIFC) {
@@ -928,7 +938,6 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 	if (dataFmt == APW_NONE) return false;
 
 	bytes = bytesPerSample[dataFmt];
-
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     data_length = total_length / (sz_frame * bytes);
 
@@ -945,29 +954,13 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 	}
 
     last_err = ERR_OK;
-    setPadding(0);
 
-	switch (dataFmt) {
-		case APW_8BIT_UNSIGNED:
-				setPadding(128);
-				decoder = &decode_8bit;
-				break;
-		case APW_8BIT_SIGNED:
-				decoder = &decode_8bit_signed;
-				break;
-		case APW_ULAW:
-				decoder = &decode_8bit_ulaw;
-				break;
-		case APW_16BIT_SIGNED:
-				decoder = &decode_16bit;
-				break;
-		#if !defined(KINETISL)
-		case APW_16BIT_SIGNED_BIGENDIAN:
-				decoder = &decode_16bit_bigendian;
-				break;
-		#endif
-		default: break;
-    }
+	decoder = decoders[dataFmt];
+
+	if (dataFmt == APW_8BIT_UNSIGNED)
+		setPadding(0x80);
+	else
+		setPadding(0);
 
 #if !defined(KINETISL)
     if (_AudioPlayWavInstances > 1) {
