@@ -141,7 +141,7 @@ private:
 
     AudioBaseWav(void);
     ~AudioBaseWav(void){ close(); }
-
+	int calcBufPreload(int count, int last, int my);
 	int8_t* createBuffer(size_t len); //!< allocate the buffer
     inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
 
