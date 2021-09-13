@@ -237,7 +237,7 @@ void AudioBaseWav::evFuncRead(EventResponderRef ref) //!< foreground: respond to
     AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
 
     SPRT("*** ");
-    thisWM.read(thisWM.buffer,thisWM.sz_mem);
+    thisWM.read(thisWM.getOtherBuffer(),thisWM.sz_mem / 2);
 }
 
 void AudioBaseWav::evFuncWrite(EventResponderRef ref) //!< foreground: respond to request to save WAV data
@@ -262,7 +262,9 @@ void AudioBaseWav::readLater(void) //!< from interrupt: request to re-fill the b
         evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
     else
     #endif
-        read(buffer,sz_mem);		 // read immediately
+        read(getBuffer(),sz_mem);		 // read immediately
+
+	firstHalf = !firstHalf; // switch interrupts to using the other half of the buffer memory
 }
 
 size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
@@ -989,7 +991,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  createBuffer( len );
+    int8_t* buffer =  createBuffer( len * 2 );
 	if (buffer == nullptr) {
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
@@ -1011,7 +1013,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 		int load = calcBufPreload(_instances, _lastInstance, my_instance);
 		buffer_rd = load * sz_frame * bytes; // pre-load according to instance number
 		if (load > 0)
-			read(&buffer[buffer_rd], sz_mem - buffer_rd);
+			read(&buffer[buffer_rd], getBufferSize() - buffer_rd);
 
         state = newState;
         startInt(irq);
@@ -1053,7 +1055,7 @@ void  AudioPlayWav::update(void)
 	// copy the samples to the audio blocks:
     buffer_rd += decoder(buffer, buffer_rd, queue, channels) * channels;
 
-    size_t sz_mem = getBufferSize();
+    size_t sz_mem = getBufferSize() / 2; // double-buffered
     if (buffer_rd >= sz_mem ) {
         readLater();    // trigger buffer fill
         buffer_rd = 0;
