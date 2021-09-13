@@ -90,7 +90,7 @@ enum APW_ERR { ERR_OK = 0,              // no Error
 #endif
 
 
-enum APW_STATE {STATE_STOP, STATE_PAUSED, STATE_RUNNING};
+enum APW_STATE {STATE_STOP, STATE_PAUSED, STATE_RUNNING, STATE_ABORT};
 
 class AudioPlayWav;
 class AudioRecordWav;
@@ -143,7 +143,10 @@ private:
     ~AudioBaseWav(void){ close(); }
 
 	int8_t* createBuffer(size_t len); //!< allocate the buffer
-    inline int8_t* getBuffer() { return buffer; } //!< return pointer to buffer holding WAV data
+	bool firstHalf;						//!< if double-buffering, true to use first half
+	int16_t count;
+    inline int8_t* getBuffer() { return buffer + (firstHalf?0:(sz_mem/2)); } //!< return pointer to buffer holding WAV data
+    inline int8_t* getOtherBuffer() { return buffer + ((!firstHalf)?0:(sz_mem/2)); } //!< return pointer to buffer holding WAV data
 
     inline bool seek(size_t pos) { return wavfile.seek(pos); }//!< seek to new file position
     inline void flush(void) { wavfile.flush(); }

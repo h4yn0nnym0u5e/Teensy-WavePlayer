@@ -204,9 +204,12 @@ int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
 		sz_mem  = len;
 	else
 		sz_mem = 0;
+	
+	firstHalf = true; // start by using first half, if we're double-buffering
+	count = 0; // zero count of times we've attempted to write from this buffer
 
-    SPTF("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
-    //for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
+    Serial.printf("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+    for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
     return buffer;
 }
 
@@ -222,9 +225,15 @@ void AudioBaseWav::evFuncRead(EventResponderRef ref) //!< foreground: respond to
 void AudioBaseWav::evFuncWrite(EventResponderRef ref) //!< foreground: respond to request to save WAV data
 {
     AudioBaseWav& thisWM = *(AudioBaseWav*) ref.getData();
+	size_t wr,expectedWR = thisWM.sz_mem / 2;
 
     SPRT("*** ");
-    thisWM.write(thisWM.buffer,thisWM.sz_mem);
+    wr = thisWM.write(thisWM.getOtherBuffer(),expectedWR);
+	if (wr < expectedWR) 
+	{
+		thisWM.state = STATE_ABORT; // needs to stop on next update()
+		thisWM.last_err = ERR_FILE;	//Disk full, max filesize reached, SD Card removed etc.
+	}
 }
 #endif
 
@@ -289,13 +298,18 @@ size_t AudioBaseWav::write(void* buf,size_t len) //!< write len bytes immediatel
 
 void AudioBaseWav::writeLater(void) //!< from interrupt: request to write the buffer to filesystem
 {
+	int16_t* buf = (int16_t*) getBuffer();
+	count++;
+	//*buf = count + (firstHalf?30000:31000);
+	
     #if USE_EVENTRESPONDER_PLAYWAV
     if (eventReadingEnabled)
-        evResp.triggerEvent(0,this); // do the read in the foreground: must delay() or yield()
+        evResp.triggerEvent(0,this);   // do the read in the foreground: must delay() or yield()
     else
     #endif
-        write(buffer,sz_mem);		 // write immediately
-
+		write(getBuffer(),sz_mem / 2); // write immediately
+	
+	firstHalf = !firstHalf; // switch interrupts to using the other half of the buffer memory
 }
 
 #if USE_EVENTRESPONDER_PLAYWAV
@@ -1219,7 +1233,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
-    int8_t* buffer =  createBuffer( len );
+    int8_t* buffer =  createBuffer( len * 2 ); // recording uses double-buffering
 	if (buffer == nullptr) {
 		last_err = ERR_OUT_OF_MEMORY;
 		return false;
@@ -1335,7 +1349,9 @@ bool AudioRecordWav::writeHeader(File file)
 __attribute__((hot))
 void  AudioRecordWav::update(void)
 {
-
+    if (STATE_ABORT == state) // event has caused us to abort
+		stop();
+	
     if (state != STATE_RUNNING) return;
 
 	unsigned int chan;
@@ -1350,16 +1366,19 @@ void  AudioRecordWav::update(void)
         queue[chan] = q;
 	} while (++chan < channels);
 
-    buffer_wr = encoder(buffer, buffer_wr, queue, channels);
-	size_t sz_mem = getBufferSize();
+    buffer_wr = encoder(getBuffer(), buffer_wr, queue, channels);
+	size_t sz_mem = getBufferSize() / 2; // recording uses double-buffering
     if (buffer_wr >= sz_mem)
     {
         buffer_wr = 0;
+		writeLater(); // may be immediate if not using EventResponder
+		/*
         size_t wr = write(buffer , sz_mem);
         if (wr < sz_mem) {
             stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
         }
+		*/
     }
 
     ++data_length;
