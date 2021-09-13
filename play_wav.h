@@ -141,7 +141,7 @@ private:
 
     AudioBaseWav(void);
     ~AudioBaseWav(void){ close(); }
-
+	int calcBufPreload(int count, int last, int my);
 	int8_t* createBuffer(size_t len); //!< allocate the buffer
 	bool firstHalf;						//!< if double-buffering, true to use first half
 	int16_t count;
@@ -196,6 +196,8 @@ private:
 
 /*********************************************************************************************************/
 
+typedef size_t (*_tEncoderDecoder)(int8_t [], size_t, audio_block_t *[], unsigned int);
+
 class AudioPlayWav : public AudioBaseWav, public AudioStream
 {
 public:
@@ -224,7 +226,7 @@ private:
 	void end(void);
     bool readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState );
     inline void setPadding(uint8_t b) { padding = b; }
-    size_t (*decoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
+	_tEncoderDecoder decoder;
     size_t total_length = 0;			// number of audio data bytes in file
 	size_t buffer_rd;	                // where we're at consuming "buffer"	 Lesezeiger
 	uint32_t channelmask = 0;           // dwChannelMask
@@ -258,7 +260,7 @@ private:
     virtual void update(void);
     void begin(void);
     void end(void);
-    size_t (*encoder)(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels);
+	_tEncoderDecoder encoder;
     audio_block_t *queue[_AudioRecordWav_MaxChannels];
     size_t sz_frame;
     size_t buffer_wr;

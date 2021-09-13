@@ -38,21 +38,27 @@
 #include "play_wav.h"
 #include <spi_interrupt.h>
 
+
 //#define HANDLE_SPI    1 //TODO...
 
+
 #if defined(KINETISL)
-static const uint8_t _AudioPlayWavInstances = 1;
+static const uint8_t _instances = 1;
 static const uint8_t _sz_mem_additional = 1;
+static uint8_t _lastInstance;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
 #endif // AUDIO_BLOCK_SAMPLES < 128
 #else
-static uint8_t _AudioPlayWavInstances = 0;
-static uint8_t _AudioRecordWavInstances = 0;
+static uint8_t _instances = 0;
 static uint8_t _sz_mem_additional = 1;
+static uint8_t _lastInstance;
 static const audio_block_t zeroblock = {0}; // required to deal gracefully with NULL block, no matter which encoder we use
 #endif // defined(KINETISL)
 
+#define PACKED __attribute__((packed))
+
+static const uint8_t bytesPerSample[APW_NONE] = {1, 1, 1, 2, 2};
 
 //----------------------------------------------------------------------------------------------------
 #if !defined(KINETISL)
@@ -70,6 +76,21 @@ __attribute__( ( always_inline ) ) static inline uint32_t __rev16(uint32_t value
   asm volatile ("rev16 %0, %1" : "=r" (result) : "r" (value) );
   return(result);
 }
+
+__attribute__(( always_inline )) static inline uint32_t __ldrexw(volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("ldrex %0, [%1]" : "=r" (result) : "r" (addr) );
+   return(result);
+}
+
+__attribute__(( always_inline )) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
+{
+   uint32_t result;
+   asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
+   return(result);
+}
+
 #endif
 
 //----------------------------------------------------------------------------------------------------
@@ -100,11 +121,8 @@ void AudioBaseWav::startInt(bool enabled)
 
 bool AudioBaseWav::isRunning(void)
 {
-    yield();
-    bool irq = stopInt();
-    bool s = state == STATE_RUNNING;
-    startInt(irq);
-    return s;
+    //yield();
+    return state == STATE_RUNNING;
 }
 
 void AudioBaseWav::pause(const bool pause)
@@ -245,7 +263,6 @@ void AudioBaseWav::readLater(void) //!< from interrupt: request to re-fill the b
     else
     #endif
         read(buffer,sz_mem);		 // read immediately
-
 }
 
 size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
@@ -367,6 +384,16 @@ void AudioBaseWav::close(bool closeFile) //!< close file, free up the buffer, de
     startInt(irq);
 }
 
+int AudioBaseWav::calcBufPreload(int count, int last, int my)
+{
+  int c = -1;
+  do {
+    ++c;
+    if (++last >= count) last = 0;
+  } while (last != my);
+  return c;
+}
+
 //----------------------------------------------------------------------------------------------------
 
 // 8 bit unsigned:
@@ -376,14 +403,34 @@ size_t decode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], co
     int8_t *p = &buffer[buffer_rd];
 
     size_t i = 0;
+	switch (channels) {
+		case 1:
+			//todo: 32 bit reads
     do {
+				queue[0]->data[i  ] = ( p[i  ] - 128 ) << 8; //8 bit fmt is unsigned
+				queue[0]->data[i+1] = ( p[i+1] - 128 ) << 8;
+				i += 2;
+			} while (i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		case 2:
+			//todo: 32 bit reads
+			do {
+				queue[0]->data[i] = ( *p++ - 128 ) << 8;
+				queue[1]->data[i] = ( *p++ - 128 ) << 8;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
         unsigned int chan = 0;
         do {
-            queue[chan]->data[i] = ( *p++ - 128 ) << 8; //8 bit fmt is unsigned
+					queue[chan]->data[i] = ( *p++ - 128 ) << 8;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
-
+			break;
+}
+    return AUDIO_BLOCK_SAMPLES;
 }
 
 
@@ -400,7 +447,7 @@ size_t decode_8bit_signed(int8_t buffer[], size_t buffer_rd, audio_block_t *queu
             queue[chan]->data[i] = (*p++) << 8;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
+    return AUDIO_BLOCK_SAMPLES;
 
 }
 
@@ -446,13 +493,32 @@ size_t decode_8bit_ulaw(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[
     uint8_t *p = (uint8_t*)&buffer[buffer_rd];
 
     size_t i = 0;
+	switch (channels) {
+		case 1:
     do {
+				queue[0]->data[i    ] = ulaw_decode[p[i    ]];
+				queue[0]->data[i + 1] = ulaw_decode[p[i + 1]];
+				i += 2;
+			} while (i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		case 2:
+			do {
+				queue[0]->data[i] = ulaw_decode[*p++];
+				queue[1]->data[i] = ulaw_decode[*p++];
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
         unsigned int chan = 0;
         do {
             queue[chan]->data[i] = ulaw_decode[*p++];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
+			break;
+}
+    return AUDIO_BLOCK_SAMPLES;
 }
 
 // 16 bit:
@@ -460,15 +526,34 @@ __attribute__((hot)) static
 size_t decode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
 
-    int16_t *p = (int16_t*) &buffer[buffer_rd];
+	switch(channels) {
+		case 1:
+			memcpy(&queue[0]->data[0], &buffer[buffer_rd], AUDIO_BLOCK_SAMPLES*2); //benchmak this
+			break;
+		case 2: {
+			uint32_t sample;
     size_t i = 0;
+			int32_t *p32 = (int32_t*) &buffer[buffer_rd];
     do {
+				sample = *p32++;
+				queue[0]->data[i] = sample;
+				queue[1]->data[i] = sample >> 16;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+		}
+		default: {
+			size_t i = 0;
+			int16_t *p = (int16_t*) &buffer[buffer_rd];
+			do {
         unsigned int chan = 0;
         do {
             queue[chan]->data[i] = *p++;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
+			break;
+}
+	}
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 
 // 16 bit big endian:
@@ -485,10 +570,13 @@ size_t decode_16bit_bigendian(int8_t buffer[], size_t buffer_rd, audio_block_t *
             queue[chan]->data[i] = __rev16(*p++);
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
-
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 #endif
+
+static const _tEncoderDecoder decoders[APW_NONE] = {
+	decode_8bit, decode_8bit_signed, decode_8bit_ulaw,
+	decode_16bit, decode_16bit_bigendian};
 
 // Todo:
 //- upsampling (CMSIS?)
@@ -501,8 +589,8 @@ void AudioPlayWav::begin(void)
 {
     state = STATE_STOP;
 #if !defined(KINETISL)
-    my_instance = _AudioPlayWavInstances;
-    ++_AudioPlayWavInstances;
+    my_instance = _instances;
+    ++_instances;
 #endif // !defined(KINETISL)
 }
 
@@ -510,7 +598,7 @@ void AudioPlayWav::end(void)
 {
 	stop();
 #if !defined(KINETISL)
-    --_AudioPlayWavInstances;
+    --_instances;
 #endif // !defined(KINETISL)
 }
 
@@ -603,7 +691,7 @@ typedef struct {
   unsigned long id;
   unsigned long len;
   unsigned long riffType;
-} tFileHeader;
+} PACKED tFileHeader;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformat
 typedef struct
@@ -615,7 +703,7 @@ typedef struct
   unsigned long   nSamplesPerSec;
   unsigned long   nAvgBytesPerSec;
   unsigned short  nBlockAlign;
-} __attribute__ ((__packed__)) tFmtHeader;
+} PACKED tFmtHeader;
 
 // https://docs.microsoft.com/en-us/previous-versions/dd757713(v=vs.85)
 typedef struct
@@ -629,7 +717,7 @@ typedef struct
   unsigned short wBlockAlign;
   unsigned short wBitsPerSample;
   //unsigned short cbSize;
-} __attribute__ ((__packed__)) tFmtHeaderEx;
+} PACKED tFmtHeaderEx;
 
 // https://docs.microsoft.com/de-de/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
 typedef struct
@@ -641,18 +729,19 @@ typedef struct
     unsigned short wValidBitsPerSample;
     unsigned short wSamplesPerBlock;
     unsigned short wReserved;
-  };
+  } PACKED;
   unsigned long dwChannelMask;
   struct {
     unsigned short  format;
     char guid[14];
-  } __attribute__ ((__packed__));
-} __attribute__ ((__packed__)) tFmtHeaderExtensible;
+  } PACKED;
+} PACKED tFmtHeaderExtensible;
 
-typedef struct {
+typedef struct
+{
   unsigned long chunkID;
   unsigned long chunkSize;
-} __attribute__ ((__packed__)) tDataHeader;
+} PACKED tDataHeader;
 
 
 //AIFF, AIFC:
@@ -684,7 +773,7 @@ typedef struct {
     unsigned long numSampleFrames;
     short sampleSize;
     uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
-}  __attribute__ ((__packed__)) taiffCommonChunk;
+} PACKED taiffCommonChunk;
 
 typedef struct {
     short numChannels;
@@ -692,7 +781,7 @@ typedef struct {
     short sampleSize;
     uint8_t sampleRate[10]; //80  bit  IEEE  Standard  754  floating  point... ignore that!
     unsigned long compressionType;
-}  __attribute__ ((__packed__)) taifcCommonChunk;
+} PACKED taifcCommonChunk;
 
 
 bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t number_of_channels, APW_STATE newState)
@@ -732,21 +821,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //Serial.println("Format: RAW");
         total_length = size();
         if (total_length == 0) return false;
-        switch (dataFmt)
-        {
-            case APW_NONE: //to prevent a GCC warning..
-                break;
-            case APW_8BIT_UNSIGNED:
-            case APW_8BIT_SIGNED:
-            case APW_ULAW:
-                bytes = 1;
-                break;
-            case APW_16BIT_SIGNED:
-            case APW_16BIT_SIGNED_BIGENDIAN:
-                bytes = 2;
-                break;
         }
-    }
     else
 #if !defined(KINETISL)
     if (fileHeader.id == cFORM &&
@@ -761,6 +836,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //if ( isAIFC ) Serial.println("AIFC"); else Serial.println("AIFF");
         bool COMMread = false;
         bool SSNDread = false;
+		uint8_t bytes;
 
         do {
             irq = stopInt();
@@ -790,7 +866,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
                 if (bytes == 2) {
                     if (isAIFC) return false;
-                    dataFmt = APW_16BIT_SIGNED; //16 Bit signed
+                    dataFmt = APW_16BIT_SIGNED_BIGENDIAN;
                 } else
                 if (bytes == 1){
                     if (isAIFC) {
@@ -834,6 +910,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
         //Serial.println("Format: WAV");
         size_t position = sizeof(fileHeader);
         bool fmtok = false;
+		uint8_t bytes;
 
         do {
             irq = stopInt();
@@ -870,7 +947,9 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
                 if (fmtHeader.dwSamplesPerSec == 0) return false;
                 sample_rate = fmtHeader.dwSamplesPerSec;
                 channels = fmtHeader.wChannels;
-                if (bytes == 0 || bytes > 2) return false;
+				if (bytes == 1) dataFmt = APW_8BIT_UNSIGNED;
+				else if (bytes == 2) dataFmt = APW_16BIT_SIGNED;
+				else return false;
                 if (fmtHeader.wFormatTag != 1 &&
                     fmtHeader.wFormatTag != 7 && //ulaw
                     fmtHeader.wFormatTag != 65534) return false;
@@ -898,13 +977,15 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
     if (channels == 0 || channels > _AudioPlayWav_MaxChannels) return false;
     if (sample_rate == 0) sample_rate = AUDIO_SAMPLE_RATE_EXACT;
+	if (dataFmt == APW_NONE) return false;
 
+	bytes = bytesPerSample[dataFmt];
     sz_frame = AUDIO_BLOCK_SAMPLES * channels;
     data_length = total_length / (sz_frame * bytes);
 
     //calculate the needed buffer memory:
     size_t len;
-	len = _AudioPlayWavInstances * sz_frame * bytes;
+	len = _instances * sz_frame * bytes;
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -915,57 +996,25 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 	}
 
     last_err = ERR_OK;
-    //Serial.printf("playbuf:%x len:%x",(intptr_t) buffer, sz_mem);
-    setPadding(0);
 
-    switch(bytes) {
-        default:
-        case 1: switch (dataFmt) {
-                    default:
-                    case APW_8BIT_UNSIGNED:
-                            decoder = &decode_8bit;
-                            setPadding(128);
-                            break;
-                    case APW_8BIT_SIGNED:
-                            decoder = &decode_8bit_signed;
-                            break;
-                    case APW_ULAW:
-                            decoder = &decode_8bit_ulaw;
-                            break;
-                }
-                break;
+	decoder = decoders[dataFmt];
 
-        case 2: switch (dataFmt) {
-                    default:
-                    case APW_16BIT_SIGNED:
-                            decoder = &decode_16bit;
-                            break;
-                    #if !defined(KINETISL)
-                    case APW_16BIT_SIGNED_BIGENDIAN:
-                            decoder = &decode_16bit_bigendian;
-                            break;
-                    #endif
-                }
-                break;
-    }
+	if (dataFmt == APW_8BIT_UNSIGNED)
+		setPadding(0x80);
+	else
+		setPadding(0);
 
 #if !defined(KINETISL)
-    if (_AudioPlayWavInstances > 1) {
-        //For sync start, and to start immediately:
+    if (_instances > 1) {
 
         irq = stopInt();
+		int load = calcBufPreload(_instances, _lastInstance, my_instance);
+		buffer_rd = load * sz_frame * bytes; // pre-load according to instance number
+		if (load > 0)
+			read(&buffer[buffer_rd], sz_mem - buffer_rd);
 
-		// Simplified calculation of how much buffer to pre-load, from all down
-		// to 1/Nth depending on the instance number. This sort of works, but
-		// (a) can be sub-optimal if started in paused mode then un-paused at EXACTLY the
-		// wrong times, (b) isn't great if additional AudioPlayWav objects are created or
-		// are deleted (which will happen with dynamic audio objects)
-
-		buffer_rd = my_instance * sz_frame * bytes; // pre-load according to instance number
-        read(&buffer[buffer_rd], sz_mem - buffer_rd);
         state = newState;
         startInt(irq);
-
     } else
         state = newState;
 #else
@@ -978,6 +1027,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
+	_lastInstance = my_instance;
     if (state != STATE_RUNNING) return;
 
     unsigned int chan;
@@ -999,10 +1049,9 @@ void  AudioPlayWav::update(void)
 	} while (++chan < channels);
 
 	int8_t* buffer = getBuffer(); // buffer pointer: don't cache, could change in the future
-    //if (nullptr == currentPos) return; //This WILL NOT happen. IF it happens, let it crash for easier debug.
 
 	// copy the samples to the audio blocks:
-    buffer_rd = decoder(buffer, buffer_rd, queue, channels);
+    buffer_rd += decoder(buffer, buffer_rd, queue, channels) * channels;
 
     size_t sz_mem = getBufferSize();
     if (buffer_rd >= sz_mem ) {
@@ -1022,31 +1071,13 @@ void  AudioPlayWav::update(void)
     --data_length;
 	if (data_length <= 0) {
         SPLN("Stop: No Data anymore."); // if you care (why would you?), #define DEBUG_PRINT_PLAYWAV in play_wav.h
-		//Serial.println("data_length <= 0");
-		//state = STATE_STOP; // not good enough, leaves file open! Unless we want to?
         stop(); // proper tidy up when playing is done
     }
+
 }
 
 #define _positionMillis() ((AUDIO_BLOCK_SAMPLES * 1000.0f / AUDIO_SAMPLE_RATE_EXACT) * (total_length / (bytes * channels * AUDIO_BLOCK_SAMPLES) - data_length))
-
 #if !defined(KINETISL)
-__attribute__( ( always_inline ) ) static inline uint32_t __ldrexw(volatile uint32_t *addr)
-{
-   uint32_t result;
-   asm volatile ("ldrex %0, [%1]" : "=r" (result) : "r" (addr) );
-   return(result);
-}
-
-
-__attribute__( ( always_inline ) ) static inline uint32_t __strexw(uint32_t value, volatile uint32_t *addr)
-{
-   uint32_t result;
-   asm volatile ("strex %0, %2, [%1]" : "=&r" (result) : "r" (addr), "r" (value) );
-   return(result);
-}
-
-
 uint32_t AudioPlayWav::positionMillis(void)
 {
     uint32_t safe_read, ret;
@@ -1086,13 +1117,13 @@ typedef struct
     struct {
         tDataHeader dataHeader;
         tFmtHeaderEx fmtHeader;
-    } __attribute__ ((__packed__)) file;
-} __attribute__ ((__packed__)) tWaveFileHeader;
+    } PACKED file;
+} PACKED tWaveFileHeader;
 
 typedef struct {
         tDataHeader dataHeader;
         uint32_t dwSampleLength;
-} __attribute__ ((__packed__)) tfactChunk;
+} PACKED tfactChunk;
 
 
 //----------------------------------------------------------------------------------------------------
@@ -1101,15 +1132,35 @@ __attribute__((hot)) static
 size_t encode_8bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], const unsigned int channels)
 {
     int8_t *p = &buffer[buffer_rd];
+	size_t i = 0;
 
-    size_t i = 0;
+	switch (channels)
+	{
+		case 1:
+			//todo: 32 bit
     do {
+				*p++ = (queue[0]->data[i] >> 8) + 128; //8 bit fmt is unsigned
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		case 2:
+			//todo: 32 bit
+			do {
+				*p++ = (queue[0]->data[i] >> 8) + 128;
+				*p++ = (queue[1]->data[i] >> 8) + 128;
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+
+		default:
+			do {
         unsigned int chan = 0;
         do {
-            *p++ = (queue[chan]->data[i] >> 8) + 128; //8 bit fmt is unsigned
+					*p++ = (queue[chan]->data[i] >> 8) + 128;
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return p - buffer;
+			break;
+	}
+    return AUDIO_BLOCK_SAMPLES;
 
 }
 // 16 bit:
@@ -1118,27 +1169,42 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 {
     int16_t *p = (int16_t*) &buffer[buffer_rd];
     size_t i = 0;
+	switch (channels)
+	{
+		case 1:
+			memcpy(p, &queue[0]->data[0], AUDIO_BLOCK_SAMPLES * 2);
+			break;
+		case 2:
+			//todo: 32 bit
     do {
+				*p++ = queue[0]->data[i];
+				*p++ = queue[1]->data[i];
+			} while (++i < AUDIO_BLOCK_SAMPLES);
+			break;
+		default:
+			do {
         unsigned int chan = 0;
         do {
 			*p++ = queue[chan]->data[i];
         } while (++chan < channels);
     } while (++i < AUDIO_BLOCK_SAMPLES);
-    return (int8_t*)p - buffer;
+			break;
+}
+    return AUDIO_BLOCK_SAMPLES * 2;
 }
 //----------------------------------------------------------------------------------------------------
 
 void AudioRecordWav::begin(void)
 {
     state = STATE_STOP;
-    my_instance = _AudioRecordWavInstances;
-    ++_AudioRecordWavInstances;
+    my_instance = _instances;
+    ++_instances;
 }
 
 void AudioRecordWav::end(void)
 {
 	stop();
-    --_AudioRecordWavInstances;
+    --_instances;
 }
 
 void AudioRecordWav::stop(bool closeFile)
@@ -1180,11 +1246,12 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
 
     if (fmt != APW_8BIT_UNSIGNED && fmt != APW_16BIT_SIGNED) return false;
 
-    bytes = sample_rate = 0;
+    sample_rate = 0;
     sz_mem = sz_frame = buffer_wr = 0;
     data_length = data_length_old = 0;
 
     dataFmt = fmt;
+	bytes = bytesPerSample[dataFmt];
     channels = numchannels;
 
     #if !defined(__IMXRT1062__)
@@ -1193,14 +1260,13 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     sample_rate = AUDIO_SAMPLE_RATE_EXACT;
     #endif
 
+
     switch(dataFmt)
     {
         case APW_8BIT_UNSIGNED:
-            bytes = 1;
             encoder = &encode_8bit;
             break;
         case APW_16BIT_SIGNED:
-            bytes = 2;
             encoder = &encode_16bit;
             break;
         default:
@@ -1210,16 +1276,17 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     initWrite(file);
 
     //write a dummy fileheader and check if it was successful:
-	char tmp[sizeof(tWaveFileHeader) + sizeof(tDataHeader)];
-    memset(&tmp, 0xff, sizeof(tmp));
+
+	char tmp[512];
+    memset(&tmp, 0xff, sizeof tmp);
     irq = stopInt();
 
     ok = seek(0);
-    wr = write(&tmp, sizeof(tmp));
+    wr = write(&tmp, sizeof tmp );
     flush();
     startInt(irq);
 
-    if (!ok || wr < sizeof(tmp)) {
+    if (!ok || wr < sizeof tmp) {
         last_err = ERR_FILE;
         return false;
     }
@@ -1229,7 +1296,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     //calculate the needed buffer memory:
 
     size_t len;
-	len = _AudioRecordWavInstances * sz_frame * bytes;
+	len = _instances * sz_frame * bytes;
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -1268,7 +1335,8 @@ bool AudioRecordWav::writeHeader(File file)
     data_length_old = data_length;
 
     bool ok, irq;
-    size_t pos, sz, wr;
+    size_t pos, sz, wr, wrpos;
+	char data[512];
 
     last_err = ERR_FILE;
 
@@ -1284,10 +1352,12 @@ bool AudioRecordWav::writeHeader(File file)
 		return false;
 
 
-    bool extended = false;
+    const bool extended = false; //may be needed later.
     tWaveFileHeader header;
     tFmtHeaderExtensible headerextensible;
     tDataHeader dataHeader;
+
+	wrpos = 0;
 
     size_t szh = sizeof header;
     if (extended) szh += sizeof headerextensible;
@@ -1317,7 +1387,8 @@ bool AudioRecordWav::writeHeader(File file)
     //header.file.fmtHeader.cbSize = 0;
 
     irq = stopInt();
-    write(&header, sizeof header);
+	memcpy(&data[wrpos], &header, sizeof header);
+	wrpos += sizeof header;
 
     if (extended)
     {
@@ -1325,13 +1396,29 @@ bool AudioRecordWav::writeHeader(File file)
         headerextensible.dwChannelMask = (1 << channels) - 1;
         headerextensible.format = 0x01;
         memcpy(headerextensible.guid, cGUID, sizeof headerextensible.guid);
-        write(&headerextensible, sizeof headerextensible);
+		memcpy(&data[wrpos], &headerextensible, sizeof headerextensible);
+		wrpos += sizeof headerextensible;
     }
+
+	//fill in a dummy chunk to make sure the samples start @ position 512
+	size_t toFill = 512 - szh - 2 * sizeof dataHeader;
+	dataHeader.chunkID = 0x796d7564; //'dumy' chunk
+	dataHeader.chunkSize = toFill;
+
+	memcpy(&data[wrpos], &dataHeader, sizeof dataHeader);
+	wrpos += sizeof dataHeader;
+	memset(&data[wrpos], 0xff, toFill);
+	wrpos += toFill;
+
+	szh += sizeof dataHeader + toFill;
+
 
     dataHeader.chunkID = cDATA;
     dataHeader.chunkSize = sz - szh - sizeof dataHeader;
+	memcpy(&data[wrpos], &dataHeader, sizeof dataHeader);
+	wrpos += sizeof dataHeader;
 
-    wr = write(&dataHeader, sizeof dataHeader);
+	wr = write(&data, sizeof data);
     flush();
     if (pos > 0)
 		ok = seek(pos);
@@ -1366,7 +1453,7 @@ void  AudioRecordWav::update(void)
         queue[chan] = q;
 	} while (++chan < channels);
 
-    buffer_wr = encoder(getBuffer(), buffer_wr, queue, channels);
+    buffer_wr += encoder(buffer, buffer_wr, queue, channels) * channels;
 	size_t sz_mem = getBufferSize() / 2; // recording uses double-buffering
     if (buffer_wr >= sz_mem)
     {
@@ -1377,6 +1464,7 @@ void  AudioRecordWav::update(void)
         if (wr < sz_mem) {
             stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
+			return;
         }
 		*/
     }
