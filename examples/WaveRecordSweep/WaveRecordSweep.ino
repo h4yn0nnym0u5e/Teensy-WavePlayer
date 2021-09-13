@@ -1,7 +1,10 @@
 
 #include <Audio.h>
 #include <play_wav.h>
-/*
+
+#define xHAVE_PT8211
+
+#if defined(HAVE_PT8211)
 AudioSynthToneSweep myEffect;
 AudioOutputPT8211   audioOutput;
 AudioRecordWav      record;
@@ -13,12 +16,8 @@ AudioConnection c2(play, 0, audioOutput, 1);
 AudioConnection c3(myEffect, 0, record, 0);
 AudioConnection c4(myEffect, 0, record, 1);
 
-#include <Audio.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <SD.h>
-#include <SerialFlash.h>
-*/
+#else
+
 // GUItool: begin automatically generated code
 AudioPlayWav             play;       //xy=288,291
 AudioSynthToneSweep      myEffect;     //xy=288,382
@@ -33,6 +32,7 @@ AudioConnection          patchCord5(myEffect, 0, record, 0);
 AudioConnection          patchCord6(myEffect, 0, record, 1);
 AudioControlSGTL5000     sgtl5000_1;     //xy=466,205
 // GUItool: end automatically generated code
+#endif // defined(HAVE_PT8211)
 
 
 
@@ -48,8 +48,11 @@ File file;
 void setup(void)
 {
   AudioMemory(20);
+  
+#if !defined(HAVE_PT8211)
   sgtl5000_1.enable();
-  sgtl5000_1.volume(0.5);
+  sgtl5000_1.volume(0.1);
+#endif // defined(HAVE_PT8211)
 
   Serial.begin(9600);
 

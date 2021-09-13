@@ -226,7 +226,7 @@ int8_t* AudioBaseWav::createBuffer(size_t len) //!< allocate the buffer
 	firstHalf = true; // start by using first half, if we're double-buffering
 	count = 0; // zero count of times we've attempted to write from this buffer
 
-    Serial.printf("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
+    //Serial.printf("Allocated %d aligned bytes at %X - %X\r\n",sz_mem, buffer, buffer+sz_mem-1);
     for (size_t i=0;i<len/2;i++) *((int16_t*) buffer+i) = i * 30000 / len;
     return buffer;
 }
@@ -1453,20 +1453,12 @@ void  AudioRecordWav::update(void)
         queue[chan] = q;
 	} while (++chan < channels);
 
-    buffer_wr += encoder(buffer, buffer_wr, queue, channels) * channels;
+    buffer_wr += encoder(getBuffer(), buffer_wr, queue, channels) * channels;
 	size_t sz_mem = getBufferSize() / 2; // recording uses double-buffering
     if (buffer_wr >= sz_mem)
     {
         buffer_wr = 0;
 		writeLater(); // may be immediate if not using EventResponder
-		/*
-        size_t wr = write(buffer , sz_mem);
-        if (wr < sz_mem) {
-            stop(false); //Disk full, max filesize reached, SD Card removed etc.
-            last_err = ERR_FILE;
-			return;
-        }
-		*/
     }
 
     ++data_length;
