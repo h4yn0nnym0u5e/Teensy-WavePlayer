@@ -41,18 +41,18 @@
 
 //#define HANDLE_SPI    1 //TODO...
 
+
 #if defined(KINETISL)
-static const uint8_t _AudioPlayWavInstances = 1;
+static const uint8_t _instances = 1;
 static const uint8_t _sz_mem_additional = 1;
-static uint8_t _AudioPlayWavLastInstance;
+static uint8_t _lastInstance;
 #if AUDIO_BLOCK_SAMPLES < 128
 //#warning WavePlay: AUDIO_BLOCK_SAMPLES is less than 128. Expect noise.
 #endif // AUDIO_BLOCK_SAMPLES < 128
 #else
-static uint8_t _AudioPlayWavInstances = 0;
-static uint8_t _AudioRecordWavInstances = 0;
+static uint8_t _instances = 0;
 static uint8_t _sz_mem_additional = 1;
-static uint8_t _AudioPlayWavLastInstance;
+static uint8_t _lastInstance;
 static const audio_block_t zeroblock = {0}; // required to deal gracefully with NULL block, no matter which encoder we use
 #endif // defined(KINETISL)
 
@@ -254,7 +254,6 @@ void AudioBaseWav::readLater(void) //!< from interrupt: request to re-fill the b
     else
     #endif
         read(buffer,sz_mem);		 // read immediately
-
 }
 
 size_t AudioBaseWav::read(void* buf,size_t len) //!< read len bytes immediately into buffer provided
@@ -576,8 +575,8 @@ void AudioPlayWav::begin(void)
 {
     state = STATE_STOP;
 #if !defined(KINETISL)
-    my_instance = _AudioPlayWavInstances;
-    ++_AudioPlayWavInstances;
+    my_instance = _instances;
+    ++_instances;
 #endif // !defined(KINETISL)
 }
 
@@ -585,7 +584,7 @@ void AudioPlayWav::end(void)
 {
 	stop();
 #if !defined(KINETISL)
-    --_AudioPlayWavInstances;
+    --_instances;
 #endif // !defined(KINETISL)
 }
 
@@ -972,7 +971,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 
     //calculate the needed buffer memory:
     size_t len;
-	len = _AudioPlayWavInstances * sz_frame * bytes;
+	len = _instances * sz_frame * bytes;
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -992,11 +991,10 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 		setPadding(0);
 
 #if !defined(KINETISL)
-    if (_AudioPlayWavInstances > 1) {
-
+    if (_instances > 1) {
 
         irq = stopInt();
-		int load = calcBufPreload(_AudioPlayWavInstances, _AudioPlayWavLastInstance, my_instance);
+		int load = calcBufPreload(_instances, _lastInstance, my_instance);
 		buffer_rd = load * sz_frame * bytes; // pre-load according to instance number
 		if (load > 0)
 			read(&buffer[buffer_rd], sz_mem - buffer_rd);
@@ -1015,7 +1013,7 @@ bool AudioPlayWav::readHeader(APW_FORMAT fmt, uint32_t sampleRate, uint8_t numbe
 __attribute__((hot))
 void  AudioPlayWav::update(void)
 {
-	_AudioPlayWavLastInstance = my_instance;
+	_lastInstance = my_instance;
 	if (state != STATE_RUNNING) return;
 
     unsigned int chan;
@@ -1185,14 +1183,14 @@ size_t encode_16bit(int8_t buffer[], size_t buffer_rd, audio_block_t *queue[], c
 void AudioRecordWav::begin(void)
 {
     state = STATE_STOP;
-    my_instance = _AudioRecordWavInstances;
-    ++_AudioRecordWavInstances;
+    my_instance = _instances;
+    ++_instances;
 }
 
 void AudioRecordWav::end(void)
 {
 	stop();
-    --_AudioRecordWavInstances;
+    --_instances;
 }
 
 void AudioRecordWav::stop(bool closeFile)
@@ -1264,16 +1262,17 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     initWrite(file);
 
     //write a dummy fileheader and check if it was successful:
-	char tmp[sizeof(tWaveFileHeader) + sizeof(tDataHeader)];
-    memset(&tmp, 0xff, sizeof(tmp));
+
+	char tmp[512];
+    memset(&tmp, 0xff, sizeof tmp);
     irq = stopInt();
 
     ok = seek(0);
-    wr = write(&tmp, sizeof(tmp));
+    wr = write(&tmp, sizeof tmp );
     flush();
     startInt(irq);
 
-    if (!ok || wr < sizeof(tmp)) {
+    if (!ok || wr < sizeof tmp) {
         last_err = ERR_FILE;
         return false;
     }
@@ -1283,7 +1282,7 @@ bool AudioRecordWav::record(File file, APW_FORMAT fmt, unsigned int numchannels,
     //calculate the needed buffer memory:
 
     size_t len;
-	len = _AudioRecordWavInstances * sz_frame * bytes;
+	len = _instances * sz_frame * bytes;
     len *= _sz_mem_additional;
 
     //allocate: note this buffer pointer is temporary
@@ -1322,7 +1321,8 @@ bool AudioRecordWav::writeHeader(File file)
     data_length_old = data_length;
 
     bool ok, irq;
-    size_t pos, sz, wr;
+    size_t pos, sz, wr, wrpos;
+	char data[512];
 
     last_err = ERR_FILE;
 
@@ -1342,6 +1342,8 @@ bool AudioRecordWav::writeHeader(File file)
     tWaveFileHeader header;
     tFmtHeaderExtensible headerextensible;
     tDataHeader dataHeader;
+
+	wrpos = 0;
 
     size_t szh = sizeof header;
     if (extended) szh += sizeof headerextensible;
@@ -1371,7 +1373,8 @@ bool AudioRecordWav::writeHeader(File file)
     //header.file.fmtHeader.cbSize = 0;
 
     irq = stopInt();
-    write(&header, sizeof header);
+	memcpy(&data[wrpos], &header, sizeof header);
+	wrpos += sizeof header;
 
     if (extended)
     {
@@ -1379,13 +1382,29 @@ bool AudioRecordWav::writeHeader(File file)
         headerextensible.dwChannelMask = (1 << channels) - 1;
         headerextensible.format = 0x01;
         memcpy(headerextensible.guid, cGUID, sizeof headerextensible.guid);
-        write(&headerextensible, sizeof headerextensible);
+		memcpy(&data[wrpos], &headerextensible, sizeof headerextensible);
+		wrpos += sizeof headerextensible;
     }
+
+	//fill in a dummy chunk to make sure the samples start @ position 512
+	size_t toFill = 512 - szh - 2 * sizeof dataHeader;
+	dataHeader.chunkID = 0x796d7564; //'dumy' chunk
+	dataHeader.chunkSize = toFill;
+
+	memcpy(&data[wrpos], &dataHeader, sizeof dataHeader);
+	wrpos += sizeof dataHeader;
+	memset(&data[wrpos], 0xff, toFill);
+	wrpos += toFill;
+
+	szh += sizeof dataHeader + toFill;
+
 
     dataHeader.chunkID = cDATA;
     dataHeader.chunkSize = sz - szh - sizeof dataHeader;
+	memcpy(&data[wrpos], &dataHeader, sizeof dataHeader);
+	wrpos += sizeof dataHeader;
 
-    wr = write(&dataHeader, sizeof dataHeader);
+	wr = write(&data, sizeof data);
     flush();
     if (pos > 0)
 		ok = seek(pos);
@@ -1427,6 +1446,7 @@ void  AudioRecordWav::update(void)
         if (wr < sz_mem) {
             stop(false); //Disk full, max filesize reached, SD Card removed etc.
             last_err = ERR_FILE;
+			return;
         }
     }
 
